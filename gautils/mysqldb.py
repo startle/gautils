@@ -74,6 +74,7 @@ class MysqlDb:
     def query(self, sql, *params): pass 
     def execute(self, sql, *params): pass
     def describe(self, table): pass
+    def keys_cols(self, table): pass
     def delete_all(self, table): pass
     def close(self):pass
     pass
@@ -134,6 +135,8 @@ class MysqlDbImpl(MysqlDb):
         self.__conn.close()
     def describe(self, table):
         return self._describe(table)
+    def keys_cols(self, table):
+        return self._keys_cols(table)
     def delete_all(self, table):
         self._delete_all(table)
     
