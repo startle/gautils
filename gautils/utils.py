@@ -1,6 +1,7 @@
 import logging
 import datetime
 
+''' output to perf.logging '''
 def benchmark(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, threshold=1):
     def str_format(x):
         x_str = str(x).replace('\n',' ')
@@ -49,8 +50,26 @@ def conf_logging_by_yml(yml_conf_path='./log.yml'):
         dict_conf = yaml.safe_load(f_conf)
     config.dictConfig(dict_conf)
 
+def url_parse_unquote(s):
+    if s is None or len(s) <= 0: return ''
+    import urllib
+    return urllib.parse.unquote(s)
+
+def read_dicts(s:str, kv_split='=', split='&', parse_unquote=url_parse_unquote):
+    d = {}
+    if parse_unquote is None: parse_unquote = lambda x: x
+    for l in s.split(split):
+        l = l.strip()
+        if len(l) <= 0: continue
+        index = l.find(kv_split)
+        if index <= 0: continue
+        d[l[:index]] = parse_unquote(l[index+1:].strip())
+    return d
+
+
 if __name__ == '__main__':
     conf_logging_by_yml()
+    
     import time
     @benchmark()
     def f2():
@@ -62,3 +81,6 @@ if __name__ == '__main__':
         time.sleep(0.8)
     f2()
     f0_8()
+    
+    d = read_dicts('controler=State& action=GetOnlineUsers_Local &token=ujiqjwehxnacnkkjheqoijksjaldo')
+    print(d)
