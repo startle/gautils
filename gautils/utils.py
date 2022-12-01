@@ -1,5 +1,6 @@
 import logging
 import datetime
+import os
 
 ''' output to perf.logging '''
 def benchmark(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, threshold=1):
@@ -52,8 +53,8 @@ def conf_logging_by_yml(yml_conf_path='./log.yml'):
 
 def url_parse_unquote(s):
     if s is None or len(s) <= 0: return ''
-    import urllib
-    return urllib.parse.unquote(s)
+    from urllib.parse import unquote
+    return unquote(s)
 
 def read_dicts(s:str, kv_split='=', split='&', parse_unquote=url_parse_unquote):
     d = {}
@@ -66,6 +67,27 @@ def read_dicts(s:str, kv_split='=', split='&', parse_unquote=url_parse_unquote):
         d[l[:index]] = parse_unquote(l[index+1:].strip())
     return d
 
+def list_files(_dir:str = None, recursion=True):
+    def recursion_list_file(path:str):
+        if os.path.isfile(path):
+            yield path
+        elif os.path.isdir(path):
+            for cpath in os.listdir(path):
+                for x in recursion_list_file(os.path.join(path, cpath)):
+                    yield x
+    if _dir is None : raise Exception('_dir cannot be None.')
+    if not os.path.exists(_dir) or not os.path.isdir(_dir): raise Exception('_dir is not a dir. [%s]' % _dir)
+    
+    if not recursion: return os.listdir(_dir)
+    else: return list(recursion_list_file(_dir))
+
+def singleton(cls):
+    _instance = {}
+    def _singleton(*args, **kargs):
+        if cls not in _instance:
+            _instance[cls] = cls(*args, **kargs)
+        return _instance[cls]
+    return _singleton
 
 if __name__ == '__main__':
     conf_logging_by_yml()
@@ -84,3 +106,6 @@ if __name__ == '__main__':
     
     d = read_dicts('controler=State& action=GetOnlineUsers_Local &token=ujiqjwehxnacnkkjheqoijksjaldo')
     print(d)
+    
+    files = list_files('gautils')
+    for f in files: print(f)
