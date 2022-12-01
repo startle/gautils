@@ -262,6 +262,8 @@ if __name__ == '__main__':
     print(cnt)
     query = dbm().s_query('for_test')
     print(query.query())
+    df = dbm().query('SELECT * from for_test')
+    print(df)
     df = dbm().query('select vpn, grp, `name` from vpn_record where log_time >= date_add(now(), interval %s MINUTE) AND (speed_down + speed_up) >= %s group by vpn, grp, `name` HAVING COUNT(`name`)>=%s', -60, 100, 1)
     print(df)
     df = dbm().query('select vpn, max(log_time) as max_time from vpn_record where vpn != "" group by vpn')
