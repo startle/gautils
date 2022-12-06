@@ -24,7 +24,7 @@ class Conf:
     def get_float(self, path, default=None, ignore_none = False): return float(self.get(path, default=default,ignore_none=ignore_none))
     def get_bool(self, path, default=None, ignore_none = False): return bool(self.get(path, default=default,ignore_none=ignore_none))
     def get_dict(self, path, default=None, ignore_none = False): 
-        data = self._get(path)
+        data = self._get(path, default=default,ignore_none=ignore_none)
         if isinstance(data, dict): return data
         else: raise ValueError('path not dict. [%s]', self._path_to_str(path))
     def _path_to_str(self, path): return ('.'.join(path))
