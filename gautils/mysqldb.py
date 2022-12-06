@@ -147,15 +147,6 @@ class MysqlDbImpl(MysqlDb):
         cursor.close()
         if is_close_conn : self.close()
         return cnt
-    def _dbtype2dtype(self, dbtype:str):
-        index = dbtype.find('(')
-        if index > 0 : dbtype = dbtype[:index]
-        index = dbtype.find(' ')
-        if index > 0 : dbtype = dbtype[:index]
-        if dbtype in ['varchar','char','datetime','date','time']: return 'U13'
-        elif dbtype in ['float','double','decimal']: return 'float64'
-        elif dbtype in ['tinyint','smallint','int','bigint'] : return 'int'
-        raise KeyError('dbtype[%s] not found.' % dbtype)
     def _query(self, sql:str, *params, is_close_conn=True):
         def read_row(row):
             def trans(x):
@@ -260,6 +251,17 @@ if __name__ == '__main__':
     pwd = cf.get(['db','pwd'])
     db = cf.get(['db','db'])
     def dbm(): return connect_mysql(host, port, account, pwd, db)
+
+    from gautils import utils
+    utils.conf_logging_by_yml()
+    @utils.benchmark()
+    def u():
+        sql = 'select * from daily limit 20000'
+        df = dbm().query(sql)
+        print (df)
+    u()
+    import sys
+    sys.exit()
     df = pd.DataFrame(data={'id':[1,2],'name':['gau','startle'],'score':[3.1415, 1.0086],'log_time':['2022-12-01 10:24', '2019-12-17 00:25']})
     cnt = dbm().update('for_test', df)
     print(cnt)

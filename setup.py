@@ -12,9 +12,9 @@ setup(
   download_url = 'https://github.com/startle/gautils/archive/refs/heads/main.zip',
   keywords = ['gau', 'utils'],
   install_requires=[
-    'pandas==1.3.2',
+    'pandas>=1.3.2',
     'mysql-connector==2.2.9',
-    'PyYAML==5.4.1',
+    'PyYAML>=5.4.1',
   ],
   classifiers=[
     'Development Status :: 3 - Alpha',      # Chose either "3 - Alpha", "4 - Beta" or "5 - Production/Stable" as the current state of your package
