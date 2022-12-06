@@ -9,10 +9,11 @@ class Conf:
             yml = yaml.safe_load(f.read())
             self.datas = yml
     def get(self, path, default=None, ignore_none = False):
-        d = self._get()
+        d = self._get(path, default=default, ignore_none=ignore_none)
         if isinstance(d, str): d = d.strip()
         return d
     def _get(self, path, default=None, ignore_none = False):
+        if default is not None: ignore_none = True
         d = self.datas
         for k in path:
             if k not in d:
