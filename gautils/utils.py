@@ -2,7 +2,7 @@ import logging
 import datetime
 import os
 
-def watch_process(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, threshold=1):
+def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_index_formatter={}, threshold=1):
     ''' output to perf.logging '''
     def str_format(x):
         x_str = str(x).replace('\n',' ')
@@ -19,12 +19,12 @@ def watch_process(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, th
         else: return str_format(x)
     def decorator(func):
         def arg_str_format(index, arg):
-            if index in exclude_arg: return '_'
-            elif index in arg_format: return arg_format[index](arg)
+            if index in exclude_arg_indexes: return '_'
+            elif index in arg_index_formatter: return arg_index_formatter[index](arg)
             else: return default_str_format(arg)
         def kw_str_format(k, v):
-            if k in exclude_kw: return '%s:_'%k
-            elif k in kw_format: return '%s:%s'%(k, kw_format(k))
+            if k in exclude_ks: return '%s:_'%k
+            elif k in kw_formatter: return '%s:%s'%(k, kw_formatter(k))
             else: return '%s:%s'%(k, default_str_format(v))
         def wrapper(*args, **kw):
             def call_str_format():
