@@ -7,6 +7,7 @@ from gautils.conf import Conf
 from gautils.qwx import WXWorkRobot
 from gautils.utils import (
     benchmark, 
+    watch_process,
     conf_logging_by_yml, 
     read_dicts,
     url_parse_unquote,
