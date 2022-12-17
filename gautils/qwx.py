@@ -15,6 +15,9 @@ class WXWorkRobot:
         }''' % msg.encode("utf-8").decode("latin1")
         headers = {'user-agent': 'my-app/0.0.1'}
         requests.post(self._url, headers=headers, data=data, verify=False)
+def send_qwx_md_msg(url, msg, mentioned_list=None):
+    qwx = WXWorkRobot(url)
+    qwx.send_md(msg, mentioned_list=mentioned_list)
 if __name__ == '__main__':
     import conf
     cf = conf.Conf('conf.yml')

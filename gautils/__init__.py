@@ -4,7 +4,10 @@ from gautils.mysqldb import (
     connect_mysql,
     )
 from gautils.conf import Conf
-from gautils.qwx import WXWorkRobot
+from gautils.qwx import (
+    WXWorkRobot,
+    send_qwx_md_msg,
+    )
 from gautils.utils import (
     benchmark, 
     watch_process,
@@ -13,4 +16,10 @@ from gautils.utils import (
     url_parse_unquote,
     singleton,
     list_files,
+    read_lines,
+    write_lines,
+    binsearch,
+    floor,
+    ceil,
+    md5,
     )
