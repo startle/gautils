@@ -190,7 +190,7 @@ class MysqlDbImpl(MysqlDb):
             try:
                 self.__conn.close()
             except Exception as e:
-                logging.error(f'{self} close failed.', exc_info=e)
+                log.error(f'{self} close failed.', exc_info=e)
             self._connected = False
     def describe(self, table):
         cursor = self.__conn.cursor()
@@ -212,12 +212,12 @@ class MysqlDbImpl(MysqlDb):
         cols = (df[df['Key']!='PRI'].loc[:,'Field'].tolist())
         return keys, cols
     def delete_all(self, table):
-        sql = 'DELETE FROM {0}'.format(table)
-        return self._execute(sql)
+        sql = 'TRUNCATE TABLE {0}'.format(table)
+        return self.execute(sql)
     def __del__(self):
         try:
             self.close()
-            logging.log(f'{self} closed.')
+            log.log(f'{self} closed.')
         except Exception as e:
             pass
     def __str__(self) -> str:
@@ -251,38 +251,3 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, c
         db.query = file_cache_query
         pass
     return db
-
-if __name__ == '__main__':
-    import utils
-    utils.conf_logging_by_yml('./log.yml')
-
-    import conf
-    cf = conf.Conf('conf.yml')
-    host = cf.get(['db','host'])
-    port = cf.get(['db','port'])
-    account = cf.get(['db','account'])
-    pwd = cf.get(['db','pwd'])
-    db = cf.get(['db','db'])
-    _dbm = connect_mysql(host, port, account, pwd, db)
-    def dbm(): return _dbm
-
-    from gautils import utils
-    utils.conf_logging_by_yml()
-    @utils.benchmark()
-    def u():
-        sql = 'select * from for_test limit 20000'
-        df = dbm().query(sql)
-        print (df)
-    u()
-    df = pd.DataFrame(data={'id':[1,2],'name':['gau','startle'],'score':[3.1415, 1.0086],'log_time':['2022-12-01 10:24', '2019-12-17 00:25']})
-    cnt = dbm().update('for_test', df)
-    print(cnt)
-    query = dbm().s_query('for_test')
-    print(query.query())
-    df = dbm().query('SELECT * from for_test')
-    print(df)
-    df = dbm().query('select vpn, grp, `name` from vpn_record where log_time >= date_add(now(), interval %s MINUTE) AND (speed_down + speed_up) >= %s group by vpn, grp, `name` HAVING COUNT(`name`)>=%s', -60, 100, 1)
-    print(df)
-    df = dbm().query('select vpn, max(log_time) as max_time from vpn_record where vpn != "" group by vpn')
-    print(df)
-    pass

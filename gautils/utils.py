@@ -2,7 +2,7 @@ import logging
 import datetime
 import os
 
-def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_index_formatter={}, threshold=1):
+def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_index_formatter={}, threshold=1, logger_name = 'perf'):
     ''' output to perf.logging '''
     def str_format(x):
         x_str = str(x).replace('\n',' ')
@@ -37,7 +37,7 @@ def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_in
             e = datetime.datetime.now()
             time_s = (e-b).total_seconds()
             if time_s >= threshold:
-                logging.getLogger('perf').info('(%.3fs)call %s' % (time_s, call_str_format()))
+                logging.getLogger(logger_name).info('(%.3fs)call %s' % (time_s, call_str_format()))
             return obj
         return wrapper
     return decorator
