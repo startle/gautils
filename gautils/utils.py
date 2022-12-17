@@ -2,8 +2,8 @@ import logging
 import datetime
 import os
 
-''' output to perf.logging '''
-def benchmark(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, threshold=1):
+def watch_process(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, threshold=1):
+    ''' output to perf.logging '''
     def str_format(x):
         x_str = str(x).replace('\n',' ')
         if len(x_str) < 150: return x_str
@@ -29,7 +29,7 @@ def benchmark(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, thresh
         def wrapper(*args, **kw):
             def call_str_format():
                 str_args = [arg_str_format(id,arg) for id, arg in enumerate(args)]
-                str_args += [kw_str_format(k,v) for k, v in kw]
+                str_args += [kw_str_format(k,v) for k, v in kw.items()]
                 text = '%s.%s(%s)' % (func.__module__, func.__name__, ', '.join(str_args))
                 return text
             b = datetime.datetime.now()
@@ -41,6 +41,7 @@ def benchmark(exclude_kw=[], exclude_arg=[], kw_format={}, arg_format={}, thresh
             return obj
         return wrapper
     return decorator
+benchmark = watch_process
 
 def conf_logging_by_yml(yml_conf_path='./log.yml'):
     import yaml
