@@ -112,94 +112,32 @@ def _db_field_type2dtype(db_field_type:int):
         raise Exception("db_field_type[%s] unsupported." % (FieldType.get_info(db_field_type)))
 class MysqlDbImpl(MysqlDb):
     def __init__(self, host, port, account, pwd,db, **kws):
+        self._host = host
+        self._port = port
+        self._connected = False
         try:
             # self.__conn = mysql.connector.connect(host=h, port=p, user=u, passwd=pwd, database=db, **kws)
-            self.__conn = mysql.connector.connect(host=host, port=port, user=account, passwd=pwd, database=db, charset='utf8')
+            self.__conn = mysql.connector.connect(host=host, port=port, user=account, passwd=pwd, database=db, **kws)
+            self._connected = True
         except Exception as e:
             log.error('conn failed.h[%s] p[%s] u[%s] db[%s]' %(host, port, account, db), exc_info=e)
             raise e
     def s_query(self, table, cols=None) -> MysqlQuery:
         return MysqlQuery(self, table, cols)
-    def update(self, table, df:pd.DataFrame, is_close_conn=True) -> int:
+    def update(self, table, df:pd.DataFrame) -> int:
         batch=10000
         df = df.reset_index()
         cnt = 0
         for idf in MysqlDbImpl._section_batch(df, batch):
-            cnt += self._update(table, idf, is_close_conn=False)
+            cnt += self._update_each_batch(table, idf)
         return cnt
-    def execute(self, sql, *params):
-        return self._execute(sql, *params)
-    def query(self, sql, *params):
-        return self._query(sql, *params)
-    def close(self):
-        self.__conn.close()
-    def describe(self, table):
-        return self._describe(table)
-    def keys_cols(self, table):
-        return self._keys_cols(table)
-    def delete_all(self, table):
-        self._delete_all(table)
-    
-    def _execute(self, sql, is_close_conn=True, *params):
-        cursor = self.__conn.cursor()
-        cnt = cursor.execute(sql, params)
-        self.__conn.commit()
-        cursor.close()
-        if is_close_conn : self.close()
-        return cnt
-    def _query(self, sql:str, *params, is_close_conn=True):
-        def read_row(row):
-            def trans(x):
-                if type(x) in [bytearray]:
-                    return x.decode('utf8')
-                else: return x
-            return [trans(x) for x in row]
-        def query_from_db():
-            cursor = self.__conn.cursor()
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
-            cols = [x[0] for x in cursor.description]
-            field_types = [x[1] for x in cursor.description]
-            dtypes = {cols[i]:_db_field_type2dtype(x) for i,x in enumerate(field_types)}
-            df = pd.DataFrame(data = [read_row(row) for row in rows], columns = cols)
-            df = df.astype(dtypes)
-            cursor.close()
-            if is_close_conn : self.close()
-            return df
-        return query_from_db()
-    def _describe(self, table, is_close_conn = True):
-        cursor = self.__conn.cursor()
-        sql = 'describe {0}'.format(table)
-        cursor.execute(sql)
-        l=list()
-        rows = cursor.fetchall()
-        for row in rows:
-            l.append(row)
-        df = pd.DataFrame(data=l, columns=['Field', 'Type','Null','Key','Default','Extra'])
-        df['Type'] = df['Type'].apply(lambda x: x.decode('UTF-8','strict') if type(x) != str else x)
-        df['Key'] = df['Key'].apply(lambda x: x.decode('UTF-8','strict') if type(x) != str else x)
-        cursor.close()
-        if is_close_conn: self.close()
-        return df
-    def _keys_cols(self, table, is_close_conn = True):
-        df:pd.DataFrame = self._describe(table, is_close_conn = is_close_conn)
-        keys = (df[df['Key']=='PRI'].loc[:,'Field'].tolist())
-        cols = (df[df['Key']!='PRI'].loc[:,'Field'].tolist())
-        return keys, cols
-    @staticmethod
-    def _section_batch(df, b):
-        if len(df) > b:
-            for i in range(0, len(df), b):
-                yield df.iloc[i:(i+b)]
-        else: yield df
-    def _update(self, table, df:pd.DataFrame, is_close_conn=True):
+    def _update_each_batch(self, table, df:pd.DataFrame):
         if df.empty: return 0
         UPDATE_SQL = 'INSERT INTO {0}({1}) VALUES({2}) ON DUPLICATE KEY UPDATE {3}'
-        idx_cols, upd_cols= self._keys_cols(table, is_close_conn=False)
+        idx_cols, upd_cols= self.keys_cols(table)
         upd_cols = np.intersect1d(upd_cols, df.columns.values).tolist()
         if len(upd_cols) <= 0:raise ValueError('update cols cannot be empty.')
         if len(idx_cols) <= 0:raise ValueError('index cols cannot be empty.')
-        # col_sql = '`' + '`,`'.join(idx_cols + upd_cols) + '`'
         col_sql = '`' + '`,`'.join(idx_cols + upd_cols) + '`'
         val_sql = ','.join([' %s' for x in range(len(idx_cols) + len(upd_cols))])
         upd_sql = ','.join(['`{0}`=VALUES(`{0}`)'.format(x) for x in upd_cols])
@@ -216,13 +154,85 @@ class MysqlDbImpl(MysqlDb):
             log.error('sql update failed. sql:%s'%sql, exc_info = e)
             raise e
         finally:
-            if is_close_conn : self.close()
+            self._after_execute()
             return cnt
-    def _delete_all(self, table, is_close_conn = True):
+    def execute(self, sql, *params):
+        cursor = self.__conn.cursor()
+        cnt = cursor.execute(sql, params)
+        self.__conn.commit()
+        cursor.close()
+        self._after_execute()
+        return cnt
+    def query(self, sql, *params):
+        def read_row(row):
+            def trans(x):
+                if type(x) in [bytearray]:
+                    return x.decode('utf8')
+                else: return x
+            return [trans(x) for x in row]
+        def query_from_db():
+            cursor = self.__conn.cursor()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            cols = [x[0] for x in cursor.description]
+            field_types = [x[1] for x in cursor.description]
+            dtypes = {cols[i]:_db_field_type2dtype(x) for i,x in enumerate(field_types)}
+            df = pd.DataFrame(data = [read_row(row) for row in rows], columns = cols)
+            df = df.astype(dtypes)
+            cursor.close()
+            self._after_execute()
+            return df
+        return query_from_db()
+    def _after_execute(self):
+        pass
+    def close(self):
+        if self._connected:
+            try:
+                self.__conn.close()
+            except Exception as e:
+                logging.error(f'{self} close failed.', exc_info=e)
+            self._connected = False
+    def describe(self, table):
+        cursor = self.__conn.cursor()
+        sql = 'describe {0}'.format(table)
+        cursor.execute(sql)
+        l=list()
+        rows = cursor.fetchall()
+        for row in rows:
+            l.append(row)
+        df = pd.DataFrame(data=l, columns=['Field', 'Type','Null','Key','Default','Extra'])
+        df['Type'] = df['Type'].apply(lambda x: x.decode('UTF-8','strict') if type(x) != str else x)
+        df['Key'] = df['Key'].apply(lambda x: x.decode('UTF-8','strict') if type(x) != str else x)
+        cursor.close()
+        self._after_execute()
+        return df
+    def keys_cols(self, table):
+        df:pd.DataFrame = self.describe(table)
+        keys = (df[df['Key']=='PRI'].loc[:,'Field'].tolist())
+        cols = (df[df['Key']!='PRI'].loc[:,'Field'].tolist())
+        return keys, cols
+    def delete_all(self, table):
         sql = 'DELETE FROM {0}'.format(table)
-        return self._execute(sql, is_close_conn = is_close_conn)
-def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, charset='utf8') -> MysqlDb:
-    db = MysqlDbImpl(h, p, u, pwd, db, charset=charset)
+        return self._execute(sql)
+    def __del__(self):
+        try:
+            self.close()
+            logging.log(f'{self} closed.')
+        except Exception as e:
+            pass
+    def __str__(self) -> str:
+        return f'db[{self._host}:{self._port}]'
+
+    @staticmethod
+    def _section_batch(df, b):
+        if len(df) > b:
+            for i in range(0, len(df), b):
+                yield df.iloc[i:(i+b)]
+        else: yield df
+    
+def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, charset='utf8', **kws) -> MysqlDb:
+    kws.update({'charset':charset})
+    db = MysqlDbImpl(h, p, u, pwd, db, **kws)
     if cache_dir is None: cache_dir = './temp/cache'
     def build_cache_path(sql:str, *params):
         sql = sql + '_' + '_'.join([str(x) for x in params])
@@ -243,6 +253,9 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, c
     return db
 
 if __name__ == '__main__':
+    import utils
+    utils.conf_logging_by_yml('./log.yml')
+
     import conf
     cf = conf.Conf('conf.yml')
     host = cf.get(['db','host'])
@@ -250,18 +263,17 @@ if __name__ == '__main__':
     account = cf.get(['db','account'])
     pwd = cf.get(['db','pwd'])
     db = cf.get(['db','db'])
-    def dbm(): return connect_mysql(host, port, account, pwd, db)
+    _dbm = connect_mysql(host, port, account, pwd, db)
+    def dbm(): return _dbm
 
     from gautils import utils
     utils.conf_logging_by_yml()
     @utils.benchmark()
     def u():
-        sql = 'select * from daily limit 20000'
+        sql = 'select * from for_test limit 20000'
         df = dbm().query(sql)
         print (df)
     u()
-    import sys
-    sys.exit()
     df = pd.DataFrame(data={'id':[1,2],'name':['gau','startle'],'score':[3.1415, 1.0086],'log_time':['2022-12-01 10:24', '2019-12-17 00:25']})
     cnt = dbm().update('for_test', df)
     print(cnt)
