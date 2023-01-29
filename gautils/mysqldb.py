@@ -100,7 +100,7 @@ _db_field_type2dtype_dict = {
     # FieldType.TINY_BLOB: ,
     # FieldType.MEDIUM_BLOB: ,
     # FieldType.LONG_BLOB: ,
-    # FieldType.BLOB: ,
+    FieldType.BLOB: 'U13',
     FieldType.VAR_STRING: 'U13',
     FieldType.STRING: 'U13',
     # FieldType.GEOMETRY: ,
@@ -111,16 +111,18 @@ def _db_field_type2dtype(db_field_type:int):
     else:
         raise Exception("db_field_type[%s] unsupported." % (FieldType.get_info(db_field_type)))
 class MysqlDbImpl(MysqlDb):
-    def __init__(self, host, port, account, pwd,db, **kws):
+    def __init__(self, host, port, account, pwd, db, **kws):
         self._host = host
         self._port = port
-        self._connected = False
+        self._account = account
+        self._pwd = pwd
+        self._db = db
+        self._conn_kws = kws
+    def _get_conn(self):
         try:
-            # self.__conn = mysql.connector.connect(host=h, port=p, user=u, passwd=pwd, database=db, **kws)
-            self.__conn = mysql.connector.connect(host=host, port=port, user=account, passwd=pwd, database=db, **kws)
-            self._connected = True
+            return mysql.connector.connect(host=self._host, port=self._port, user=self._account, passwd=self._pwd, database=self._db, **self._conn_kws)
         except Exception as e:
-            log.error('conn failed.h[%s] p[%s] u[%s] db[%s]' %(host, port, account, db), exc_info=e)
+            log.error('conn failed.h[%s] p[%s] u[%s] db[%s]' %(self._host, self._port, self._account, self._db), exc_info=e)
             raise e
     def s_query(self, table, cols=None) -> MysqlQuery:
         return MysqlQuery(self, table, cols)
@@ -143,26 +145,28 @@ class MysqlDbImpl(MysqlDb):
         upd_sql = ','.join(['`{0}`=VALUES(`{0}`)'.format(x) for x in upd_cols])
         sql = UPDATE_SQL.format(table, col_sql, val_sql, upd_sql)
         cnt = 0
+        datas = [tuple(x.values) for i, x in df.loc[:, idx_cols + upd_cols].replace({np.nan: None}).iterrows()]
+        conn = self._get_conn()
         try:
-            datas = [tuple(x.values) for i, x in df.loc[:, idx_cols + upd_cols].replace({np.nan: None}).iterrows()]
-            cursor = self.__conn.cursor()
+            cursor = conn.cursor()
             cursor.executemany(sql, datas)
             cnt = cursor.rowcount
-            self.__conn.commit()
+            conn.commit()
             cursor.close()
-        except Exception as e:
-            log.error('sql update failed. sql:%s'%sql, exc_info = e)
-            raise e
+            return cnt
         finally:
+            self.close_conn(conn)
+    def execute(self, sql, *params):
+        conn = self._get_conn()
+        try:
+            cursor = conn.cursor()
+            cnt = cursor.execute(sql, params)
+            conn.commit()
+            cursor.close()
             self._after_execute()
             return cnt
-    def execute(self, sql, *params):
-        cursor = self.__conn.cursor()
-        cnt = cursor.execute(sql, params)
-        self.__conn.commit()
-        cursor.close()
-        self._after_execute()
-        return cnt
+        finally:
+            self.close_conn(conn)
     def query(self, sql, *params):
         def read_row(row):
             def trans(x):
@@ -171,40 +175,34 @@ class MysqlDbImpl(MysqlDb):
                 else: return x
             return [trans(x) for x in row]
         def query_from_db():
-            cursor = self.__conn.cursor()
-            cursor.execute(sql, params)
-            rows = cursor.fetchall()
-            cols = [x[0] for x in cursor.description]
-            field_types = [x[1] for x in cursor.description]
-            dtypes = {cols[i]:_db_field_type2dtype(x) for i,x in enumerate(field_types)}
-            df = pd.DataFrame(data = [read_row(row) for row in rows], columns = cols)
-            df = df.astype(dtypes)
-            cursor.close()
-            self._after_execute()
-            return df
+            conn = self._get_conn()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+                cols = [x[0] for x in cursor.description]
+                field_types = [x[1] for x in cursor.description]
+                dtypes = {cols[i]:_db_field_type2dtype(x) for i,x in enumerate(field_types)}
+                df = pd.DataFrame(data = [read_row(row) for row in rows], columns = cols)
+                df = df.astype(dtypes)
+                cursor.close()
+                self._after_execute()
+                return df
+            finally:
+                self.close_conn(conn)
         return query_from_db()
     def _after_execute(self):
         pass
     def close(self):
-        if self._connected:
-            try:
-                self.__conn.close()
-            except Exception as e:
-                log.error(f'{self} close failed.', exc_info=e)
-            self._connected = False
+        pass
+    def close_conn(self, conn):
+        try:
+            conn.close()
+        except Exception as e:
+            log.error(f'close conn failed.', exc_info=e)
     def describe(self, table):
-        cursor = self.__conn.cursor()
         sql = 'describe {0}'.format(table)
-        cursor.execute(sql)
-        l=list()
-        rows = cursor.fetchall()
-        for row in rows:
-            l.append(row)
-        df = pd.DataFrame(data=l, columns=['Field', 'Type','Null','Key','Default','Extra'])
-        df['Type'] = df['Type'].apply(lambda x: x.decode('UTF-8','strict') if type(x) != str else x)
-        df['Key'] = df['Key'].apply(lambda x: x.decode('UTF-8','strict') if type(x) != str else x)
-        cursor.close()
-        self._after_execute()
+        df = self.query(sql)
         return df
     def keys_cols(self, table):
         df:pd.DataFrame = self.describe(table)
