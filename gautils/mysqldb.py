@@ -86,7 +86,7 @@ _db_field_type2dtype_dict = {
     FieldType.FLOAT: 'float64',
     FieldType.DOUBLE: 'float64',
     # FieldType.NULL:
-    # FieldType.LONGLONG: ,
+    FieldType.LONGLONG: 'int64',
     FieldType.INT24: 'int64',
     FieldType.DATE: 'U13',
     FieldType.TIME: 'U13',
