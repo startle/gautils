@@ -6,8 +6,9 @@ import os
 import hashlib
 import numpy as np
 import logging
+import math
+import types
 
-log = logging.getLogger(__name__)
 class And:
     def __init__(self):
         self.__conds = list()
@@ -66,7 +67,7 @@ class MysqlQuery:
                 return self.__db.query(sql, *(self.__where.params()))
             else :return self.__db.query(sql)
         except Exception as ex:
-            log.error('error sql: %s' % sql, exc_info=ex)
+            logging.error('error sql: %s' % sql, exc_info=ex)
             raise ex
 class MysqlDb:
     def s_query(self, table, cols=None) -> MysqlQuery: pass
@@ -122,7 +123,7 @@ class MysqlDbImpl(MysqlDb):
         try:
             return mysql.connector.connect(host=self._host, port=self._port, user=self._account, passwd=self._pwd, database=self._db, **self._conn_kws)
         except Exception as e:
-            log.error('conn failed.h[%s] p[%s] u[%s] db[%s]' %(self._host, self._port, self._account, self._db), exc_info=e)
+            logging.error('conn failed.h[%s] p[%s] u[%s] db[%s]' %(self._host, self._port, self._account, self._db), exc_info=e)
             raise e
     def s_query(self, table, cols=None) -> MysqlQuery:
         return MysqlQuery(self, table, cols)
@@ -145,7 +146,8 @@ class MysqlDbImpl(MysqlDb):
         upd_sql = ','.join(['`{0}`=VALUES(`{0}`)'.format(x) for x in upd_cols])
         sql = UPDATE_SQL.format(table, col_sql, val_sql, upd_sql)
         cnt = 0
-        datas = [tuple(x.values) for i, x in df.loc[:, idx_cols + upd_cols].replace({np.nan: None}).iterrows()]
+        def format(x): return tuple(None if isinstance(v, float) and math.isnan(v) else v for v in x.values)
+        datas = [format(x) for _, x in df.loc[:, idx_cols + upd_cols].iterrows()]
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
@@ -154,6 +156,9 @@ class MysqlDbImpl(MysqlDb):
             conn.commit()
             cursor.close()
             return cnt
+        except BaseException as e:
+            logging.error(f'execute failed. sql[{sql}]')
+            raise e
         finally:
             self.close_conn(conn)
     def execute(self, sql, *params):
@@ -199,7 +204,7 @@ class MysqlDbImpl(MysqlDb):
         try:
             conn.close()
         except Exception as e:
-            log.error(f'close conn failed.', exc_info=e)
+            logging.error(f'close conn failed.', exc_info=e)
     def describe(self, table):
         sql = 'describe {0}'.format(table)
         df = self.query(sql)
@@ -215,7 +220,7 @@ class MysqlDbImpl(MysqlDb):
     def __del__(self):
         try:
             self.close()
-            log.log(f'{self} closed.')
+            logging.log(f'{self} closed.')
         except Exception as e:
             pass
     def __str__(self) -> str:
