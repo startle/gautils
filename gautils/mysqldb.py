@@ -145,9 +145,11 @@ class MysqlDbImpl(MysqlDb):
         val_sql = ','.join([' %s' for x in range(len(idx_cols) + len(upd_cols))])
         upd_sql = ','.join(['`{0}`=VALUES(`{0}`)'.format(x) for x in upd_cols])
         sql = UPDATE_SQL.format(table, col_sql, val_sql, upd_sql)
-        cnt = 0
-        def format(x): return tuple(None if isinstance(v, float) and math.isnan(v) else v for v in x.values)
-        datas = [format(x) for _, x in df.loc[:, idx_cols + upd_cols].iterrows()]
+        
+        df = df.astype('object')
+        df.where(df.notna(), None, inplace=True)
+        # def format(x): return tuple(None if isinstance(v, float) and math.isnan(v) else v for v in x.values)
+        datas = [tuple(x.values) for _, x in df.loc[:, idx_cols + upd_cols].iterrows()]
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
