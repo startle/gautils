@@ -92,7 +92,7 @@ _db_field_type2dtype_dict = {
     FieldType.DATE: 'U13',
     FieldType.TIME: 'U13',
     # FieldType.TIMESTAMP: 'datetime64',
-    FieldType.DATETIME: 'datetime64',
+    FieldType.DATETIME: 'datetime64[ns]',
     FieldType.VARCHAR: 'U13',
     # FieldType.BIT: ,
     FieldType.NEWDECIMAL: 'float64',
