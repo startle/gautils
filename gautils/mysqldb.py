@@ -1,15 +1,29 @@
+'''
+nothing to doc
+'''
+import os
+import hashlib
+import logging
+from enum import Enum
+from typing import List, Tuple
+from urllib.parse import quote_plus
+
+import numpy as np
+
 #mysql-connector
 import mysql.connector
 from mysql.connector import FieldType
 import pandas as pd
-import os
-import hashlib
-import numpy as np
-import logging
-import math
-import types
+
+from sqlalchemy import create_engine, MetaData, Table, text, and_
+from sqlalchemy.sql import select
+
+class ConnType(Enum):
+    COMMON = 1
+    ALCHEMY = 2
 
 class And:
+    ''' nothing '''
     def __init__(self):
         self.__conds = list()
         self.__params = list()
@@ -72,13 +86,22 @@ class MysqlQuery:
 class MysqlDb:
     def s_query(self, table, cols=None) -> MysqlQuery: pass
     def update(self, table, df:pd.DataFrame) -> int: pass
-    def query(self, sql, *params): pass 
-    def execute(self, sql, *params): pass
-    def describe(self, table): pass
-    def keys_cols(self, table): pass
-    def delete_all(self, table): pass
+    def query(self, sql, *params, **kws): pass 
+    def execute(self, sql, *params, **kws): pass
+    
+    def describe(self, table): 
+        sql = 'describe {0}'.format(table)
+        df = self.query(sql)
+        return df
+    def keys_cols(self, table):
+        df:pd.DataFrame = self.describe(table)
+        keys = (df[df['Key']=='PRI'].loc[:,'Field'].tolist())
+        cols = (df[df['Key']!='PRI'].loc[:,'Field'].tolist())
+        return keys, cols
+    def delete_all(self, table):
+        sql = 'TRUNCATE TABLE {0}'.format(table)
+        return self.execute(sql)
     def close(self):pass
-    pass
 _db_field_type2dtype_dict = {
     FieldType.TINY: 'int64',
     FieldType.SHORT: 'int64',
@@ -163,7 +186,7 @@ class MysqlDbImpl(MysqlDb):
             raise e
         finally:
             self.close_conn(conn)
-    def execute(self, sql, *params):
+    def execute(self, sql, *params, **kws):
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
@@ -207,18 +230,6 @@ class MysqlDbImpl(MysqlDb):
             conn.close()
         except Exception as e:
             logging.error(f'close conn failed.', exc_info=e)
-    def describe(self, table):
-        sql = 'describe {0}'.format(table)
-        df = self.query(sql)
-        return df
-    def keys_cols(self, table):
-        df:pd.DataFrame = self.describe(table)
-        keys = (df[df['Key']=='PRI'].loc[:,'Field'].tolist())
-        cols = (df[df['Key']!='PRI'].loc[:,'Field'].tolist())
-        return keys, cols
-    def delete_all(self, table):
-        sql = 'TRUNCATE TABLE {0}'.format(table)
-        return self.execute(sql)
     def __del__(self):
         try:
             self.close()
@@ -234,10 +245,72 @@ class MysqlDbImpl(MysqlDb):
             for i in range(0, len(df), b):
                 yield df.iloc[i:(i+b)]
         else: yield df
+
+class DbAlchemy(MysqlDb):
+    def __init__(self, user, pwd, host, port, db, **kws) -> None:
+        self.engine = create_engine(f'mysql+pymysql://{user}:{quote_plus(pwd)}@{host}:{port}/{db}',
+                        pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True, echo=True)
+    def s_query(self, table, cols=None) -> MysqlQuery:
+        raise Exception('Unsupported Operation.[s_query]')
+    def query(self, sql:str, *params, **kws) -> pd.DataFrame:
+        print(sql)
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), kws)
+            df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            return df
+    def __create_update_sql(self, table_name, unique_key, update_columns):
+        columns = unique_key + update_columns
+        columns_str = ','.join(columns)
+        value_placeholders = ','.join([f':{col}' for col in columns])
+        updates = ','.join([f'{col}=VALUES({col})' for col in update_columns])
+        sql = f'INSERT INTO {table_name} ({columns_str}) VALUES ({value_placeholders}) ON DUPLICATE KEY UPDATE {updates}'
+        return sql
+    def update(self, table, df:pd.DataFrame) -> int:
+        keys, cols = self.keys_cols(table)
+        cols = [col for col in cols if col in df.columns]
+        df = df.filter(items = keys+cols)
+        if len(df) <= 0: return 0
+        with self.engine.connect() as conn:
+            sql = self.__create_update_sql(table, keys, cols)
+            result = conn.execute(text(sql), df.to_dict(orient='records'))
+            conn.commit()
+            return result.rowcount
+    def execute(self, sql, *params, **kws):
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), kws)
+            conn.commit()
+            return result.rowcount
+    def c_query(self, table, cols = None, limit = None, where = None, **kws) -> pd.DataFrame:
+        if cols is not None: 
+            query = select(*[text(col) for col in cols])
+        else:
+            query = select('*')
+        query = query.select_from(text(table))
+        if len(kws) > 0:
+            if where is None:
+                where = []
+                kws = {k: v for k, v in kws.items() if v is not None}
+                for key, value in kws.items():
+                    if isinstance(value, list):
+                        where.append(text(f'{key} IN :{key}'))
+                    else:
+                        where.append(text(f'{key} = :{key}'))
+                where = and_(*where)
+            query = query.where(where)
+            
+        if limit:
+            query = query.limit(limit)
+        with self.engine.connect() as conn:
+            result = conn.execute(query, kws)
+            df = pd.DataFrame(result.fetchall(), columns=result.keys())
+            return df
     
-def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, charset='utf8', **kws) -> MysqlDb:
+def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, charset='utf8', conn_type=ConnType.COMMON, **kws) -> MysqlDb:
     kws.update({'charset':charset})
-    db = MysqlDbImpl(h, p, u, pwd, db, **kws)
+    if conn_type == ConnType.COMMON:
+        db = MysqlDbImpl(h, p, u, pwd, db, **kws)
+    elif conn_type == ConnType.ALCHEMY:
+        db = DbAlchemy(u, pwd, h, p, db, **kws)
     if cache_dir is None: cache_dir = './temp/cache'
     def build_cache_path(sql:str, *params):
         sql = sql + '_' + '_'.join([str(x) for x in params])
@@ -254,5 +327,4 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, c
             return df
     if is_use_file_cache:
         db.query = file_cache_query
-        pass
     return db

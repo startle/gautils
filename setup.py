@@ -3,7 +3,7 @@ from distutils.core import setup
 setup(
   name = 'gautils',
   packages = ['gautils'],
-  version = '1.0.2',
+  version = '1.1.2',
   license='MIT',
   description = 'gau\'s utils',
   author = 'GaU',
