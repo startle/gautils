@@ -1,5 +1,4 @@
 import unittest
-import logging
 
 import pandas as pd
 
@@ -58,16 +57,8 @@ class TestDbAlchemy(unittest.TestCase):
         df = db.query('SELECT * FROM test')
         self.assertEqual(df.shape, (1, 6))
 
-    def test_2_cquery(self):
-        db = self.db
-        df = db.c_query('test', ['Id', 'Name', 'Score', 'Description', 'Owner', 'CreateTime'])
-        self.assertEqual(df.loc[0].tolist(), [1, '张三', 88.5, '张三的描述', '李四', pd.to_datetime('2023-09-07 08:00:00')])
-        df = db.c_query('test', ['Id', 'Name', 'Score', 'Description', 'Owner', 'CreateTime'], Id=1)
-        self.assertEqual(df.loc[0].tolist(), [1, '张三', 88.5, '张三的描述', '李四', pd.to_datetime('2023-09-07 08:00:00')])
-        df = db.c_query('test', ['Id', 'Name', 'Score', 'Description', 'Owner', 'CreateTime'], Id=0)
-        self.assertEqual(df.shape, (0, 6))
-        
 if __name__ == '__main__':
+    import logging
     logging.basicConfig() 
-    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+    logging.root.setLevel(logging.INFO)
     unittest.main()

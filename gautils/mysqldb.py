@@ -1,6 +1,3 @@
-'''
-nothing to doc
-'''
 import os
 import hashlib
 import logging
@@ -249,11 +246,11 @@ class MysqlDbImpl(MysqlDb):
 class DbAlchemy(MysqlDb):
     def __init__(self, user, pwd, host, port, db, **kws) -> None:
         self.engine = create_engine(f'mysql+pymysql://{user}:{quote_plus(pwd)}@{host}:{port}/{db}',
-                        pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True, echo=True)
+                        pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True, echo=False)
     def s_query(self, table, cols=None) -> MysqlQuery:
         raise Exception('Unsupported Operation.[s_query]')
     def query(self, sql:str, *params, **kws) -> pd.DataFrame:
-        print(sql)
+        logging.getLogger('mysqldb').info(f'sql: {sql}')
         with self.engine.connect() as conn:
             result = conn.execute(text(sql), kws)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
@@ -272,38 +269,16 @@ class DbAlchemy(MysqlDb):
         if len(df) <= 0: return 0
         with self.engine.connect() as conn:
             sql = self.__create_update_sql(table, keys, cols)
+            logging.getLogger('mysqldb').info(f'sql: {sql}')
             result = conn.execute(text(sql), df.to_dict(orient='records'))
             conn.commit()
             return result.rowcount
     def execute(self, sql, *params, **kws):
         with self.engine.connect() as conn:
+            logging.getLogger('mysqldb').info(f'sql: {sql}')
             result = conn.execute(text(sql), kws)
             conn.commit()
             return result.rowcount
-    def c_query(self, table, cols = None, limit = None, where = None, **kws) -> pd.DataFrame:
-        if cols is not None: 
-            query = select(*[text(col) for col in cols])
-        else:
-            query = select('*')
-        query = query.select_from(text(table))
-        if len(kws) > 0:
-            if where is None:
-                where = []
-                kws = {k: v for k, v in kws.items() if v is not None}
-                for key, value in kws.items():
-                    if isinstance(value, list):
-                        where.append(text(f'{key} IN :{key}'))
-                    else:
-                        where.append(text(f'{key} = :{key}'))
-                where = and_(*where)
-            query = query.where(where)
-            
-        if limit:
-            query = query.limit(limit)
-        with self.engine.connect() as conn:
-            result = conn.execute(query, kws)
-            df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            return df
     
 def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, charset='utf8', conn_type=ConnType.COMMON, **kws) -> MysqlDb:
     kws.update({'charset':charset})
