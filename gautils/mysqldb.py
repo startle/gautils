@@ -263,6 +263,11 @@ class DbAlchemy(MysqlDb):
         sql = f'INSERT INTO {table_name} ({cols_str}) VALUES ({value_placeholders}) ON DUPLICATE KEY UPDATE {updates}'
         return sql
     def update(self, table, df:pd.DataFrame) -> int:
+        if len(df) == 0:
+            return 0
+        df = df.astype('object')
+        df.where(df.notna(), None, inplace=True)
+
         keys, cols = self.keys_cols(table)
         cols = [col for col in cols if col in df.columns]
         df = df.filter(items = keys+cols)
