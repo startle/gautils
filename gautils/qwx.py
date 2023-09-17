@@ -6,13 +6,21 @@ class WXWorkRobot:
         urllib3.disable_warnings()
     def send_md(self, msg, mentioned_list=None):
         import requests
-        data = '''
-        {
-                "msgtype": "markdown",
-                "markdown": {
-                    "content": "%s"
-                }
-        }''' % msg
+        j = {
+            "msgtype": "markdown",
+            "markdown": {
+                "content": f'{msg}'
+            }
+        }
+        import json
+        data = json.dumps(j)
+        # data = '''
+        # {
+        #         "msgtype": "markdown",
+        #         "markdown": {
+        #             "content": "%s"
+        #         }
+        # }''' % msg.encode('utf-8').decode('unicode_escape')
         headers = {'user-agent': 'my-app/0.0.1'}
         requests.post(self._url, headers=headers, data=data, verify=False)
 def send_qwx_md_msg(url, msg, mentioned_list=None):
