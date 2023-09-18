@@ -291,12 +291,12 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, c
         sql = sql + '_' + '_'.join([str(x) for x in params])
         sign = '%d_%s' % (len(sql) ,hashlib.md5(sql.encode(encoding='utf8')).hexdigest())
         return cache_dir + sign
-    def file_cache_query(table:str, sql:str, *params):
+    def file_cache_query(table:str, sql:str, *params, **kws):
         cache_path = build_cache_path(sql, params)
         if is_use_file_cache and os.path.isfile(cache_path):
             return pd.read_json(cache_path)
         else:
-            df = MysqlDbImpl.query(db, sql, *params)
+            df = db.query(sql, *params, **kws)
             if is_use_file_cache and (len(df) > 0):
                 df.to_json(cache_path)
             return df
