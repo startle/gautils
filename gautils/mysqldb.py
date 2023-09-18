@@ -255,14 +255,19 @@ class DbAlchemy(MysqlDb):
             result = conn.execute(text(sql), kws)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
             return df
-    def __create_update_sql(self, table_name, unique_key, update_columns):
-        columns = unique_key + update_columns
-        columns_str = ','.join(columns)
-        value_placeholders = ','.join([f':{col}' for col in columns])
-        updates = ','.join([f'{col}=VALUES({col})' for col in update_columns])
-        sql = f'INSERT INTO {table_name} ({columns_str}) VALUES ({value_placeholders}) ON DUPLICATE KEY UPDATE {updates}'
+    def __create_update_sql(self, table_name, unique_key, update_cols):
+        cols = unique_key + update_cols
+        cols_str = ','.join([f'`{x}`' for x in cols])
+        value_placeholders = ','.join([f':{col}' for col in cols])
+        updates = ','.join([f'`{x}`=VALUES(`{x}`)' for x in update_cols])
+        sql = f'INSERT INTO {table_name} ({cols_str}) VALUES ({value_placeholders}) ON DUPLICATE KEY UPDATE {updates}'
         return sql
     def update(self, table, df:pd.DataFrame) -> int:
+        if len(df) == 0:
+            return 0
+        df = df.astype('object')
+        df.where(df.notna(), None, inplace=True)
+
         keys, cols = self.keys_cols(table)
         cols = [col for col in cols if col in df.columns]
         df = df.filter(items = keys+cols)
@@ -286,6 +291,8 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache = False, cache_dir=None, c
         db = MysqlDbImpl(h, p, u, pwd, db, **kws)
     elif conn_type == ConnType.ALCHEMY:
         db = DbAlchemy(u, pwd, h, p, db, **kws)
+    else:
+        raise Exception('conn_type error')
     if cache_dir is None: cache_dir = './temp/cache'
     def build_cache_path(sql:str, *params):
         sql = sql + '_' + '_'.join([str(x) for x in params])
