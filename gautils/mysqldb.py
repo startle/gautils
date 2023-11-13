@@ -245,7 +245,10 @@ class MysqlDbImpl(MysqlDb):
 
 class DbAlchemy(MysqlDb):
     def __init__(self, user, pwd, host, port, db, **kws) -> None:
-        self.engine = create_engine(f'mysql+pymysql://{user}:{quote_plus(pwd)}@{host}:{port}/{db}',
+        conn_str = f'mysql+pymysql://{user}:{quote_plus(pwd)}@{host}:{port}/{db}'
+        if len(kws) > 0:
+            conn_str += '?' + '&'.join([f'{k}={v}' for k,v in kws.items()])
+        self.engine = create_engine(conn_str,
                         pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True, echo=False)
     def s_query(self, table, cols=None) -> MysqlQuery:
         raise Exception('Unsupported Operation.[s_query]')
