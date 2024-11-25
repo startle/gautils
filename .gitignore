@@ -6,3 +6,5 @@ logs
 log.yml
 test.py
 btwatch.py
+
+*.bat
