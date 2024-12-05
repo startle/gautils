@@ -7,4 +7,6 @@ log.yml
 test.py
 btwatch.py
 
+temp/
+
 *.bat
