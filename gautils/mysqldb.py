@@ -90,7 +90,7 @@ class MysqlQuery:
 class MysqlDb:
     def s_query(self, table, cols=None) -> MysqlQuery: pass
     def update(self, table, df: pd.DataFrame) -> int: pass
-    def query(self, sql, *params, **kws): pass
+    def query(self, sql, *params, **kws) -> pd.DataFrame: pass
     def execute(self, sql, *params, **kws): pass
 
     def describe(self, table):

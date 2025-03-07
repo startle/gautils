@@ -34,3 +34,9 @@ from gautils.utils import (
 from gautils.table import (
     KVTable
 )
+from gautils.web import (
+    Web, retry_run, default_pc_headers, default_phone_headers
+)
+from gautils.coroutine import (
+    CScheduler
+)
