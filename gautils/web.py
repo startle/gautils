@@ -91,7 +91,6 @@ class Web:
         session = requests.Session()
         host = get_host(url)
         cookies = self.cookie_manager.cookies.pop(host)
-        print(host, cookies)
         session.cookies.update(cookies)
         response = retry_run(request_f, session, url, headers=self.headers, params=params, retry_times=retry_times)
         self.cookie_manager.cookies[host] = cookies
