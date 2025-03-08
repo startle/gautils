@@ -90,7 +90,10 @@ class Web:
     def request(self, url, request_f, params=None, retry_times=3):
         session = requests.Session()
         host = get_host(url)
-        cookies = self.cookie_manager.cookies.pop(host)
+        if host in self.cookie_manager.cookies:
+            cookies = self.cookie_manager.cookies.pop(host)
+        else:
+            cookies = {}
         session.cookies.update(cookies)
         response = retry_run(request_f, session, url, headers=self.headers, params=params, retry_times=retry_times)
         self.cookie_manager.cookies[host] = cookies
