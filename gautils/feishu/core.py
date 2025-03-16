@@ -63,7 +63,8 @@ class BaseAccessor(FeishuAccessor):
         url = FEISHU_API_ADDRESS + uri
         for k, v in kws.items():
             url = url.replace(f':{k}', str(v))
-        res = requests.request(http_method, url, headers=headers, params=params, json=json)
+        from ..web import retry_run
+        res = retry_run(lambda : requests.request(http_method, url, headers=headers, params=params, json=json))
         if res.status_code != 200:
             raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
         self._debug_out(uri, res)

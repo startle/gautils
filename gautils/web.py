@@ -28,7 +28,6 @@ def request(url, params=None, headers=None, _type="get") -> str:
 def default_pc_headers():
     return {
         "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "accept-encoding": "gzip, deflate, br",
         "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
     }
@@ -83,11 +82,11 @@ class Web:
     def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None):
         self.cookie_manager = CookieManager(cookies_filepath)
         self.headers = headers
-    def get(self, url, params=None, retry_times=3):
-        return self.request(url, request_f=requests.Session.get, params=params, retry_times=retry_times)
-    def post(self, url, params=None, retry_times=3):
-        return self.request(url, request_f=requests.Session.post, params=params, retry_times=retry_times)
-    def request(self, url, request_f, params=None, retry_times=3):
+    def get(self, url, params=None, retry_times=3, encoding=None):
+        return self.request(url, request_f=requests.Session.get, params=params, retry_times=retry_times, encoding=encoding)
+    def post(self, url, params=None, retry_times=3, encoding=None):
+        return self.request(url, request_f=requests.Session.post, params=params, retry_times=retry_times, encoding=encoding)
+    def request(self, url, request_f, params=None, retry_times=3, encoding=None):
         session = requests.Session()
         host = get_host(url)
         if host in self.cookie_manager.cookies:
@@ -97,8 +96,11 @@ class Web:
         session.cookies.update(cookies)
         response = retry_run(request_f, session, url, headers=self.headers, params=params, retry_times=retry_times)
         self.cookie_manager.cookies[host] = cookies
-        # self.cookie_manager.update_cookies(session.cookies.get_dict())
-        return response.text
+        if encoding is not None:
+            text = response.content.decode(encoding)
+            return text
+        else:
+            return response.text
     def parse_url(self, url):
         from urllib.parse import urlparse, parse_qs
         parsed_url = urlparse(url)
