@@ -288,6 +288,8 @@ class BiTable:
                             return []
                         elif isinstance(obj, list):
                             return obj
+                        elif isinstance(obj, set):
+                            return list(obj)
                         elif isinstance(obj, np.ndarray):
                             return obj.tolist()
                         else:
@@ -302,6 +304,7 @@ class BiTable:
             uri = '/bitable/v1/apps/:app_token/tables/:table_id/records/batch_create'
             fields_modifiable = np.intersect1d(self.field_names_modifiable, df.columns.to_list())
             df = df.reset_index(drop=False)
+            df = df.where(~df.isin([np.inf, -np.inf, np.nan]), None)
             df = df.drop(columns=list(set(df.columns) - set(fields_modifiable)))
             df = self._format_before_update(df)
 
