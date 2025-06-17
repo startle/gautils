@@ -50,6 +50,17 @@ def retry_run(f, *params, retry_times=3, sleep_s=5, **kw):
             logging.error(f"failed on {i} times...", exc_info=e)
             time.sleep(sleep_s * i)
     return None
+def retry_run2(f, retry_times=3, sleep_s=5):
+    for i in range(retry_times):
+        try:
+            result = f()
+            return result
+        except KeyboardInterrupt:
+            sys.exit(0)
+        except Exception as e:
+            logging.error(f"failed on {i} times...", exc_info=e)
+            time.sleep(sleep_s * i)
+    return None
 def get_host(url):
     import re
     match = re.search(r'^(?:http[s]?://)?([^:/?#]+)', url)
@@ -79,14 +90,19 @@ class CookieManager:
         self.cookies.update(new_cookies)
         self.save_cookies()
 class Web:
-    def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None):
+    def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None, verify=False):
         self.cookie_manager = CookieManager(cookies_filepath)
         self.headers = headers
+        self.verify = verify
     def get(self, url, params=None, retry_times=3, encoding=None):
-        return self.request(url, request_f=requests.Session.get, params=params, retry_times=retry_times, encoding=encoding)
-    def post(self, url, params=None, retry_times=3, encoding=None):
-        return self.request(url, request_f=requests.Session.post, params=params, retry_times=retry_times, encoding=encoding)
-    def request(self, url, request_f, params=None, retry_times=3, encoding=None):
+        def request(session: requests.Session, url: str):
+            return session.get(url, headers=self.headers, params=params, verify=self.verify)
+        return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
+    def post(self, url, params=None, json=None, retry_times=3, encoding=None):
+        def request(session: requests.Session, url: str):
+            return session.post(url, headers=self.headers, params=params, json=json, verify=self.verify)
+        return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
+    def request(self, url, request_f, retry_times=3, encoding=None):
         session = requests.Session()
         host = get_host(url)
         if host in self.cookie_manager.cookies:
@@ -94,7 +110,7 @@ class Web:
         else:
             cookies = {}
         session.cookies.update(cookies)
-        response = retry_run(request_f, session, url, headers=self.headers, params=params, retry_times=retry_times)
+        response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
         self.cookie_manager.cookies[host] = cookies
         if encoding is not None:
             text = response.content.decode(encoding)
