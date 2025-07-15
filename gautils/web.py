@@ -98,9 +98,9 @@ class Web:
         def request(session: requests.Session, url: str):
             return session.get(url, headers=self.headers, params=params, verify=self.verify)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
-    def post(self, url, params=None, json=None, retry_times=3, encoding=None):
+    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None):
         def request(session: requests.Session, url: str):
-            return session.post(url, headers=self.headers, params=params, json=json, verify=self.verify)
+            return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
     def request(self, url, request_f, retry_times=3, encoding=None):
         session = requests.Session()
