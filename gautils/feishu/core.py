@@ -65,6 +65,8 @@ class BaseAccessor(FeishuAccessor):
             url = url.replace(f':{k}', str(v))
         from ..web import retry_run
         res = retry_run(lambda : requests.request(http_method, url, headers=headers, params=params, json=json))
+        if res is None:
+            raise Exception(f'[request failed] url[{url}] return[{res}]')
         if res.status_code != 200:
             raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
         self._debug_out(uri, res)
@@ -192,6 +194,7 @@ class BiTable:
             self._acs = acs
             self._table_row = table_row
             self._df_fields = None
+            self.primary_key = None
         def query_fields(self):
             if self._df_fields is not None:
                 return self._df_fields
@@ -260,7 +263,6 @@ class BiTable:
             df = df.apply(_format_row)
             df.set_index(_FS.BITABLE.TABLE.ROW.ID, inplace=True)
             return df
-
         def _format_before_update(self, df: pd.DataFrame):
             df_fields = self.query_fields()
             for _, row_field in df_fields.iterrows():
@@ -346,7 +348,6 @@ class BiTable:
             if df_insert is not None:
                 cnt += self.insert_rows(df_insert.loc[:, fields_modifiable])
             return cnt
-
         def update_rows(self, df: pd.DataFrame):
             if df is None or len(df) == 0:
                 return 0
@@ -387,8 +388,11 @@ class BiTable:
             return df_fields[_FS.BITABLE.TABLE.FIELD.NAME].tolist()
         @property
         def field_names_primary(self):
-            df_fields = self.query_fields()
-            return df_fields[df_fields[_FS.BITABLE.TABLE.FIELD.IS_PRIMARY]].iloc[0][_FS.BITABLE.TABLE.FIELD.NAME]
+            if self.primary_key is None:
+                df_fields = self.query_fields()
+                return df_fields[df_fields[_FS.BITABLE.TABLE.FIELD.IS_PRIMARY]].iloc[0][_FS.BITABLE.TABLE.FIELD.NAME]
+            else:
+                return self.primary_key
         @property
         def table_id(self):
             return self._table_row[_FS.BITABLE.TABLE.ID]

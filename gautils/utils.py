@@ -152,12 +152,16 @@ def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_in
                 text = '%s.%s(%s)' % (func.__module__, func.__name__, ', '.join(str_args))
                 return text
             b = datetime.datetime.now()
-            obj = func(*args, **kw)
-            e = datetime.datetime.now()
-            time_s = (e - b).total_seconds()
-            if time_s >= threshold:
-                logging.getLogger(logger_name).info('(%.3fs)call %s' % (time_s, call_str_format()))
-            return obj
+            try:
+                obj = func(*args, **kw)
+                return obj
+            except Exception as e:
+                raise e
+            finally:
+                e = datetime.datetime.now()
+                time_s = (e - b).total_seconds()
+                if time_s >= threshold:
+                    logging.getLogger(logger_name).info('(%.3fs)call %s' % (time_s, call_str_format()))
         return wrapper
     return decorator
 
