@@ -116,7 +116,11 @@ class Web:
             text = response.content.decode(encoding)
             return text
         else:
-            return response.text
+            try :
+                return response.text
+            except Exception as e:
+                logging.error(f'response[{response}] .text error', exc_info=e)
+                return response
     def parse_url(self, url):
         from urllib.parse import urlparse, parse_qs
         parsed_url = urlparse(url)
