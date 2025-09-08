@@ -13,10 +13,8 @@ class KVTable:
     def insert(self, sdf: pd.DataFrame):
         def key_encode(sr: pd.Series):
             return sr.to_json()
-
         def data_encode(sr: pd.Series):
             return sr.to_json()
-
         def data_decode(sr: pd.Series):
             data_dict = json.loads(sr[datas_col])
             return pd.Series({k: str(v) for k, v in data_dict.items()})
