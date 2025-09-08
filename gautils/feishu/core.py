@@ -59,21 +59,26 @@ class BaseAccessor(FeishuAccessor):
             with open(debug_file, 'w', encoding='utf-8') as file:
                 json.dump(response.json(), file, indent=4, ensure_ascii=False)
     def request(self, uri, http_method='GET', params=None, json=None, **kws):
-        headers = {'Authorization': f'Bearer {self._access_token}'}
-        url = FEISHU_API_ADDRESS + uri
-        for k, v in kws.items():
-            url = url.replace(f':{k}', str(v))
-        from ..web import retry_run
-        res = retry_run(lambda : requests.request(http_method, url, headers=headers, params=params, json=json))
-        if res is None:
-            raise Exception(f'[request failed] url[{url}] return[{res}]')
-        if res.status_code != 200:
-            raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
-        self._debug_out(uri, res)
-        json = res.json()
+        def inner_request(retry=True):
+            headers = {'Authorization':f'Bearer {self._access_token}'}
+            url = FEISHU_API_ADDRESS + uri
+            for k,v in kws.items():
+                url = url.replace(f':{k}', str(v))
+            res = requests.request(http_method, url, headers = headers, params = params, json = json)
+            if res.status_code != 200:
+                raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
+            self._debug_out(uri, res)
+            result_json = res.json()
+            if (result_json['code'] != 0) and (not retry):
+                raise Exception(f'[request code!=0] url[{url}] code[{result_json["code"]}] {res.text}')
+            return result_json
+        json = inner_request(True)
         if json['code'] != 0:
-            raise Exception(f'[request code!=0] url[{url}] code[{json["code"]}] {res.text}')
-        return json
+            logging.info('rebuild accessor')
+            self._access_token = self._token_refresh_f()
+            return inner_request(False)
+        else:
+            return json
 class AccessorWrapper(BaseAccessor):
     def __init__(self, acs: FeishuAccessor, keys=None):
         self._acs = acs
@@ -271,7 +276,7 @@ class BiTable:
                 if col not in df.columns:
                     continue
                 if _type in [_FS.BITABLE.TABLE.FIELD.V_TEXT, _FS.BITABLE.TABLE.FIELD.V_SINGLE_SELECT]:
-                    df[col] = df[col].astype(str).fillna('')
+                    df[col] = df[col].astype(str).fillna('').replace('<NA>','')
                 elif _type in [_FS.BITABLE.TABLE.FIELD.V_NUMBER]:
                     df[col] = df[col].astype(float).fillna(0).round(5)
                 elif _type in [_FS.BITABLE.TABLE.FIELD.V_DATETIME]:
