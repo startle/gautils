@@ -50,9 +50,10 @@ class FeishuAccessor(ABC):
     def request(self, uri, http_method='GET', params=None, json=None, **kws):
         pass
 class BaseAccessor(FeishuAccessor):
-    def __init__(self, access_token, is_debug=True):
+    def __init__(self, access_token, is_debug=True, token_refresh_f=None):
         self._access_token = access_token
         self._is_debug = is_debug
+        self._token_refresh_f = token_refresh_f
     def _debug_out(self, uri, response):
         if self._is_debug:
             debug_file = f'{DEBUG_OUT_DIR}/{convert_url_to_windows_filename(uri)}.json'
@@ -60,16 +61,15 @@ class BaseAccessor(FeishuAccessor):
                 json.dump(response.json(), file, indent=4, ensure_ascii=False)
     def request(self, uri, http_method='GET', params=None, json=None, **kws):
         def inner_request(retry=True):
-            headers = {'Authorization':f'Bearer {self._access_token}'}
+            headers = {'Authorization': f'Bearer {self._access_token}'}
             url = FEISHU_API_ADDRESS + uri
-            for k,v in kws.items():
+            for k, v in kws.items():
                 url = url.replace(f':{k}', str(v))
-            res = requests.request(http_method, url, headers = headers, params = params, json = json)
-            if res.status_code != 200:
-                raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
-            self._debug_out(uri, res)
+            res = requests.request(http_method, url, headers=headers, params=params, json=json)
+            # if res.status_code != 200:
+            #     raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
             result_json = res.json()
-            if (result_json['code'] != 0) and (not retry):
+            if ((res.status_code != 200) or (result_json['code'] != 0)) and (not retry):
                 raise Exception(f'[request code!=0] url[{url}] code[{result_json["code"]}] {res.text}')
             return result_json
         json = inner_request(True)
@@ -276,7 +276,7 @@ class BiTable:
                 if col not in df.columns:
                     continue
                 if _type in [_FS.BITABLE.TABLE.FIELD.V_TEXT, _FS.BITABLE.TABLE.FIELD.V_SINGLE_SELECT]:
-                    df[col] = df[col].astype(str).fillna('').replace('<NA>','')
+                    df[col] = df[col].astype(str).fillna('').replace('<NA>', '')
                 elif _type in [_FS.BITABLE.TABLE.FIELD.V_NUMBER]:
                     df[col] = df[col].astype(float).fillna(0).round(5)
                 elif _type in [_FS.BITABLE.TABLE.FIELD.V_DATETIME]:
@@ -439,11 +439,11 @@ class Feishu:
         else:
             self._app_id = app_id
             self._app_secret = app_secret
-            self.init_tenant_access_token()
-        self._accessor = BaseAccessor(self._access_token, is_debug=is_debug)
-    def init_tenant_access_token(self):
+            self._access_token = self.query_tenant_access_token()
+        self._accessor = BaseAccessor(self._access_token, is_debug=is_debug, token_refresh_f=self.query_tenant_access_token)
+    def query_tenant_access_token(self):
         res = requests.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', params={'app_id': self._app_id, 'app_secret': self._app_secret})
-        self._access_token = res.json()['tenant_access_token']
+        return res.json()['tenant_access_token']
 
     def query_open_id(self) -> str:
         data = self._accessor.request('/bot/v3/info')
