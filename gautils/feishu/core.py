@@ -1,9 +1,11 @@
+import sys
 import requests
 import json
+import logging
 import pandas as pd
-from .utils import *
 from abc import ABC, abstractmethod
 import numpy as np
+from .utils import batch_split, convert_url_to_windows_filename, DEBUG_OUT_DIR
 
 FEISHU_API_ADDRESS = 'https://open.feishu.cn/open-apis/'
 
@@ -66,19 +68,17 @@ class BaseAccessor(FeishuAccessor):
             for k, v in kws.items():
                 url = url.replace(f':{k}', str(v))
             res = requests.request(http_method, url, headers=headers, params=params, json=json)
-            # if res.status_code != 200:
-            #     raise Exception(f'[request failed] url[{url}] code[{res.status_code}]\n{res.text}')
             result_json = res.json()
             if ((res.status_code != 200) or (result_json['code'] != 0)) and (not retry):
                 raise Exception(f'[request code!=0] url[{url}] code[{result_json["code"]}] {res.text}')
             return result_json
-        json = inner_request(True)
-        if json['code'] != 0:
+        result_json = inner_request(True)
+        if result_json['code'] != 0:
             logging.info('rebuild accessor')
             self._access_token = self._token_refresh_f()
             return inner_request(False)
         else:
-            return json
+            return result_json
 class AccessorWrapper(BaseAccessor):
     def __init__(self, acs: FeishuAccessor, keys=None):
         self._acs = acs
@@ -317,8 +317,12 @@ class BiTable:
 
             def inner(df: pd.DataFrame):
                 data = {'records': [{'fields': {k: v for k, v in x.items() if k in df.columns}} for x in df.to_dict(orient='records')]}
-                res = self._acs.request(uri, http_method='POST', json=data)
-                return len(res['data']['records'])
+                try:
+                    res = self._acs.request(uri, http_method='POST', json=data)
+                    return len(res['data']['records'])
+                except Exception as e:
+                    logging.error(f'[insert_rows] df={str(df.iloc[:10])} \ncount[{len(df)}]', exc_info=e)
+                    raise e
             return sum([inner(x) for x in batch_split(df, 500)])
         def insert_on_duplicate_update_rows(self, df: pd.DataFrame):
             if df is None or len(df) == 0:
