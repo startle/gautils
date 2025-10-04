@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 from abc import ABC, abstractmethod
 import numpy as np
-from .utils import batch_split, convert_url_to_windows_filename, DEBUG_OUT_DIR
+from ..utils import batch_split, convert_url_to_windows_filename, DEBUG_OUT_DIR
 
 FEISHU_API_ADDRESS = 'https://open.feishu.cn/open-apis/'
 
