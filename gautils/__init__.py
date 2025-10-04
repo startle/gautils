@@ -13,9 +13,6 @@ from gautils.qwx import (
     send_qwx_md_msg,
 )
 
-from gautils.feishu import (
-    send_fs_robot_msg,
-)
 from gautils.utils import (
     benchmark,
     watch_process,
@@ -31,6 +28,7 @@ from gautils.utils import (
     ceil,
     md5,
 )
+
 from gautils.table import (
     KVTable
 )
@@ -39,4 +37,7 @@ from gautils.web import (
 )
 from gautils.coroutine import (
     CScheduler
+)
+from gautils.feishu import (
+    send_fs_robot_msg,
 )

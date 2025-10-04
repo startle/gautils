@@ -3,7 +3,21 @@ import datetime
 import os
 import math
 import sys
+import pandas as pd
+import os
 
+DEBUG_OUT_DIR = 'temp/debug_out'
+def convert_url_to_windows_filename(url: str):
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        url = url.replace(char, '_')
+    return url
+def batch_split(l, n):
+    for i in range(0, len(l), n):
+        if isinstance(l, pd.DataFrame):
+            yield l.iloc[i:i + n, :]
+        else:
+            yield l[i:i + n]
 def conf_logging_by_yml(yml_conf_path='./log.yml'):
     import yaml
     import os
@@ -167,6 +181,7 @@ def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_in
                         print(msg)
         return wrapper
     return decorator
+
 
 benchmark = watch_process
 
