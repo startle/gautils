@@ -61,22 +61,26 @@ class BaseAccessor(FeishuAccessor):
             debug_file = f'{DEBUG_OUT_DIR}/{convert_url_to_windows_filename(uri)}.json'
             with open(debug_file, 'w', encoding='utf-8') as file:
                 json.dump(response.json(), file, indent=4, ensure_ascii=False)
-    def request(self, uri, http_method='GET', params=None, json=None, **kws):
-        def inner_request(retry=True):
+    def request(self, uri, http_method='GET', params=None, json=None, timeout_s=60, **kws):
+        def inner_request(json, retry=True):
             headers = {'Authorization': f'Bearer {self._access_token}'}
             url = FEISHU_API_ADDRESS + uri
             for k, v in kws.items():
                 url = url.replace(f':{k}', str(v))
-            res = requests.request(http_method, url, headers=headers, params=params, json=json)
+            # if json is not None:
+            #     from gautils import write_lines
+            #     print(json)
+            #     write_lines('temp/json.json', str(json))
+            res = requests.request(http_method, url, headers=headers, params=params, json=json, timeout=timeout_s)
             result_json = res.json()
             if ((res.status_code != 200) or (result_json['code'] != 0)) and (not retry):
-                raise Exception(f'[request code!=0] url[{url}] code[{result_json["code"]}] {res.text}')
+                raise ValueError(f'[request code!=0] url[{url}] code[{result_json["code"]}] {res.text}')
             return result_json
-        result_json = inner_request(True)
+        result_json = inner_request(json, True)
         if result_json['code'] != 0:
             logging.info('rebuild accessor')
             self._access_token = self._token_refresh_f()
-            return inner_request(False)
+            return inner_request(json, False)
         else:
             return result_json
 class AccessorWrapper(BaseAccessor):
@@ -316,14 +320,14 @@ class BiTable:
             df = self._format_before_update(df)
 
             def inner(df: pd.DataFrame):
-                data = {'records': [{'fields': {k: v for k, v in x.items() if k in df.columns}} for x in df.to_dict(orient='records')]}
+                data = {'records': [{'fields': {k: v for k, v in x.items() if (k in df.columns and v is not None)}} for x in df.to_dict(orient='records')]}
                 try:
                     res = self._acs.request(uri, http_method='POST', json=data)
                     return len(res['data']['records'])
                 except Exception as e:
                     logging.error(f'[insert_rows] df={str(df.iloc[:10])} \ncount[{len(df)}]', exc_info=e)
                     raise e
-            return sum([inner(x) for x in batch_split(df, 500)])
+            return sum([inner(x) for x in batch_split(df, 1000)])
         def insert_on_duplicate_update_rows(self, df: pd.DataFrame):
             if df is None or len(df) == 0:
                 return 0
@@ -366,7 +370,7 @@ class BiTable:
             df = self._format_before_update(df)
 
             def inner(df: pd.DataFrame):
-                data = {'records': [{'record_id': x['record_id'], 'fields': {k: v for k, v in x.items() if k in fields_modifiable}} for x in df.to_dict(orient='records')]}
+                data = {'records': [{'record_id': x['record_id'], 'fields': {k: v for k, v in x.items() if k in fields_modifiable and v is not None}} for x in df.to_dict(orient='records')]}
                 res = self._acs.request(uri, http_method='POST', json=data)
                 return len(res['data']['records'])
             return sum([inner(x) for x in batch_split(df, 500)])
