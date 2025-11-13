@@ -1,4 +1,61 @@
 [MESSAGES CONTROL]
-disable=C0116,C0114,C0115,F0002,C0103,C0209,C0321,W0621,W1203
+# 禁用规则分组说明：
+disable=
+    # 1. 文档相关：暂不强制要求文档字符串及格式
+    C0114,  # missing module docstring（模块缺少文档字符串）
+    C0115,  # missing class docstring（类缺少文档字符串）
+    C0116,  # missing function docstring（函数缺少文档字符串）
+    C0123,  # docstring format mismatch（文档字符串格式不符合规范）
+    # R0201,  # method could be a function（方法可定义为静态方法）
+
+    # 2. 命名规范：项目暂不严格限制命名格式
+    C0102,  # name defined in builtins（变量名与内置名称冲突）
+    C0103,  # invalid name（命名不符合规范）
+
+    # 3. 代码风格：允许灵活的代码格式
+    C0209,  # formatting a regular string which could be a f-string（可用f-string但未用）
+    C0301,  # line too long（行长度超过限制，已自定义max-line-length）
+    C0303,  # trailing whitespace（行尾空格）
+    C0304,  # missing-final-newline（缺少文件末尾的换行符）
+    C0305,  # too many blank lines（空行数过多）
+    C0321,  # more than one statement on a single line（一行多个语句）
+    # C0330,  # bad-continuation（续行格式错误）
+    W1203,  # logging format string uses an f-string（日志用f-string）
+    W1309,  # f-string is missing placeholders（f-string中存在未使用变量）
+
+    # 4. 导入相关：允许灵活的导入方式
+    C0411,  # import order for 'xxx' is incorrect（导入顺序错误）
+    C0413,  # import not at top of file（导入未放在文件顶部）
+    C0415,  # import out of order（导入位置混乱）
+    W0611,  # unused import（未使用的导入）
+    W0401,  # wildcard import（通配符导入）
+    W0402,  # unused import from wildcard import（未使用的通配符导入）
+    W0614,  # unused-wildcard-import（未使用的通配符导入）
+    E0401,  # import-error（无法导入模块，已知模块存在时）
+
+    # 5. 未使用项：允许临时存在未使用元素
+    W0107,  # unnecessary-pass（多余的pass语句）
+    W0611,  # unused import（未使用的导入）
+    W0612,  # unused variable（未使用的变量）
+    W0613,  # unused argument（未使用的参数）
+
+    # 6. 逻辑与运行时：允许特定场景的逻辑写法
+    # E0202,  # method-hidden（方法重写时参数不匹配）
+    # W0102,  # dangerous-default-value（默认参数使用可变类型）
+    W0212,  # protected-access（访问类的保护成员）
+    # W0221,  # arguments-differ（方法重写时参数数量不匹配）
+    W0511,  # fixme（未处理的异常或TODO）
+    # W1514,  # subprocess-run-check（使用os.system而非subprocess）
+    W0718,  # Catching too general exception Exception 
+    W0622,  # Redefining built-in 'xxxx'
+    W0621,  # Redefining name 'xxxx' from outer scope
+    W0603,  # Using the global statement
+
+    # 7. 重复代码与简化建议：允许暂时保留的代码风格
+    # R0801,  # duplicate-code（检测到重复代码块）
+    # R1705,  # no-else-return（else分支可简化）
+    # W0108,  # unnecessary-lambda（匿名函数可改为普通函数）
+
 [MAIN]
 max-line-length=240
+    

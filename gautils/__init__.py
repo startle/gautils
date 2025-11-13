@@ -30,7 +30,7 @@ from gautils.utils import (
 )
 
 from gautils.table import (
-    KVTable
+    KVTable, KEY_ENCODE_MD5, KEY_ENCODE_JSON
 )
 from gautils.web import (
     Web, retry_run, default_pc_headers, default_phone_headers

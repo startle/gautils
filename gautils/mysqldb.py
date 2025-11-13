@@ -2,7 +2,6 @@ import os
 import hashlib
 import logging
 from enum import Enum
-from typing import List, Tuple
 from urllib.parse import quote_plus
 
 import numpy as np
@@ -12,8 +11,7 @@ import mysql.connector
 from mysql.connector import FieldType
 import pandas as pd
 
-from sqlalchemy import create_engine, MetaData, Table, text, and_
-from sqlalchemy.sql import select
+from sqlalchemy import create_engine, text
 
 class ConnType(Enum):
     COMMON = 1
@@ -65,15 +63,15 @@ class MysqlQuery:
     def and_cond(self, cond, *params):
         self.__where.cond(cond, params)
         return self
-    ''' values must be a list or array '''
     def and_in(self, col, values):
+        ''' values must be a list or array '''
         self.__where.vin(col, values)
         return self
     def and_eq(self, col, value):
         self.__where.eq(col, [value])
         return self
     def query(self) -> pd.DataFrame:
-        if self.__cols == None:
+        if self.__cols is None:
             colSql = '*'
         else:
             colSql = ','.join(['`' + x + '`' for x in self.__cols])
@@ -85,13 +83,13 @@ class MysqlQuery:
             else :
                 return self.__db.query(sql)
         except Exception as ex:
-            logging.error('error sql: %s' % sql, exc_info=ex)
+            logging.error('error sql: %s', sql, exc_info=ex)
             raise ex
 class MysqlDb:
-    def s_query(self, table, cols=None) -> MysqlQuery: pass
-    def update(self, table, df: pd.DataFrame) -> int: pass
-    def query(self, sql, *params, **kws) -> pd.DataFrame: pass
-    def execute(self, sql, *params, **kws): pass
+    def s_query(self, table, cols=None) -> MysqlQuery: raise NotImplementedError
+    def update(self, table, df: pd.DataFrame) -> int: raise NotImplementedError
+    def query(self, sql, *params, **kws) -> pd.DataFrame: raise NotImplementedError
+    def execute(self, sql, *params, **kws): raise NotImplementedError
 
     def describe(self, table):
         sql = 'describe {0}'.format(table)
@@ -139,7 +137,7 @@ def _db_field_type2dtype(db_field_type: int):
     if db_field_type in _db_field_type2dtype_dict:
         return _db_field_type2dtype_dict[db_field_type]
     else:
-        raise Exception("db_field_type[%s] unsupported." % (FieldType.get_info(db_field_type)))
+        raise ValueError("db_field_type[%s] unsupported." % (FieldType.get_info(db_field_type)))
 class MysqlDbImpl(MysqlDb):
     def __init__(self, host, port, account, pwd, db, **kws):
         self._host = host
@@ -152,7 +150,7 @@ class MysqlDbImpl(MysqlDb):
         try:
             return mysql.connector.connect(host=self._host, port=self._port, user=self._account, passwd=self._pwd, database=self._db, **self._conn_kws)
         except Exception as e:
-            logging.error('conn failed.h[%s] p[%s] u[%s] db[%s]' % (self._host, self._port, self._account, self._db), exc_info=e)
+            logging.error('conn failed.h[%s] p[%s] u[%s] db[%s]', self._host, self._port, self._account, self._db, exc_info=e)
             raise e
     def s_query(self, table, cols=None) -> MysqlQuery:
         return MysqlQuery(self, table, cols)
@@ -182,31 +180,26 @@ class MysqlDbImpl(MysqlDb):
         df.where(df.notna(), None, inplace=True)
         # def format(x): return tuple(None if isinstance(v, float) and math.isnan(v) else v for v in x.values)
         datas = [tuple(x.values) for _, x in df.loc[:, idx_cols + upd_cols].iterrows()]
-        conn = self._get_conn()
         try:
-            cursor = conn.cursor()
-            cursor.executemany(sql, datas)
-            cnt = cursor.rowcount
-            conn.commit()
-            cursor.close()
-            return cnt
+            with self._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.executemany(sql, datas)
+                cnt = cursor.rowcount
+                conn.commit()
+                cursor.close()
+                return cnt
         except BaseException as e:
             logging.error(f'execute failed. sql[{sql}]')
             raise e
-        finally:
-            self.close_conn(conn)
     def execute(self, sql, *params, **kws):
-        conn = self._get_conn()
-        try:
+        with self._get_conn() as conn:
             cursor = conn.cursor()
             cnt = cursor.execute(sql, params)
             conn.commit()
             cursor.close()
             self._after_execute()
             return cnt
-        finally:
-            self.close_conn(conn)
-    def query(self, sql, *params):
+    def query(self, sql, *params, **kws):
         def read_row(row):
             def trans(x):
                 if type(x) in [bytearray]:
@@ -216,37 +209,24 @@ class MysqlDbImpl(MysqlDb):
             return [trans(x) for x in row]
 
         def query_from_db():
-            conn = self._get_conn()
-            try:
-                cursor = conn.cursor()
-                cursor.execute(sql, params)
-                rows = cursor.fetchall()
-                cols = [x[0] for x in cursor.description]
-                field_types = [x[1] for x in cursor.description]
-                dtypes = {cols[i]: _db_field_type2dtype(x) for i, x in enumerate(field_types)}
-                df = pd.DataFrame(data=[read_row(row) for row in rows], columns=cols)
-                df = df.astype(dtypes)
-                cursor.close()
+            with self._get_conn() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+                    cols = [x[0] for x in cursor.description]
+                    field_types = [x[1] for x in cursor.description]
+                    dtypes = {cols[i]: _db_field_type2dtype(x) for i, x in enumerate(field_types)}
+                    df = pd.DataFrame(data=[read_row(row) for row in rows], columns=cols)
+                    df = df.astype(dtypes)
                 self._after_execute()
                 return df
-            finally:
-                self.close_conn(conn)
         return query_from_db()
     def _after_execute(self):
         pass
     def close(self):
         pass
-    def close_conn(self, conn):
-        try:
-            conn.close()
-        except Exception as e:
-            logging.error(f'close conn failed.', exc_info=e)
     def __del__(self):
-        try:
-            self.close()
-            logging.log(f'{self} closed.')
-        except Exception as e:
-            pass
+        self.close()
     def __str__(self) -> str:
         return f'db[{self._host}:{self._port}]'
 
@@ -266,8 +246,8 @@ class DbAlchemy(MysqlDb):
         self.engine = create_engine(conn_str,
                                     pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True, echo=False)
     def s_query(self, table, cols=None) -> MysqlQuery:
-        raise Exception('Unsupported Operation.[s_query]')
-    def query(self, sql: str, **kws) -> pd.DataFrame:
+        raise ValueError('Unsupported Operation.[s_query]')
+    def query(self, sql: str, *params, **kws) -> pd.DataFrame:
         logging.getLogger('mysqldb').info(f'sql: {sql}')
         with self.engine.connect() as conn:
             result = conn.execute(text(sql), kws)
@@ -297,7 +277,7 @@ class DbAlchemy(MysqlDb):
             result = conn.execute(text(sql), df.to_dict(orient='records'))
             conn.commit()
             return result.rowcount
-    def execute(self, sql, **kws):
+    def execute(self, sql, *params, **kws):
         with self.engine.connect() as conn:
             logging.getLogger('mysqldb').info(f'sql: {sql}')
             result = conn.execute(text(sql), kws)
@@ -311,7 +291,7 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cha
     elif conn_type == ConnType.ALCHEMY:
         db = DbAlchemy(u, pwd, h, p, db, **kws)
     else:
-        raise Exception('conn_type error')
+        raise ValueError(f'conn_type error. [{conn_type}]')
     if cache_dir is None:
         cache_dir = './temp/cache'
 
@@ -320,7 +300,7 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cha
         sign = '%d_%s' % (len(sql) , hashlib.md5(sql.encode(encoding='utf8')).hexdigest())
         return cache_dir + sign
 
-    def file_cache_query(table: str, sql: str, *params, **kws):
+    def file_cache_query(_, sql: str, *params, **kws):
         cache_path = build_cache_path(sql, params)
         if is_use_file_cache and os.path.isfile(cache_path):
             return pd.read_json(cache_path)
