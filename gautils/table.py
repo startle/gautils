@@ -35,10 +35,11 @@ class KVTable:
 
         keys = sdf[key_col].unique().tolist()
         print('---------------')
-        print('tables', self._table, self._name)
-        print('keys', len(keys), keys)
-        df_existed: pd.DataFrame = self._db.query(f'SELECT * FROM {self._table} WHERE `name`=:name AND `keys` in :keys', name=self._name, keys=keys)
-        print('existed', len(df_existed), df_existed[key_col].to_list())
+        # print('tables', self._table, self._name)
+        # print('keys', len(keys), keys)
+        df_existed: pd.DataFrame = self._db.query(f'SELECT * FROM {self._table} WHERE `name`=:name AND `keys` IN :keys', name=self._name, keys=keys)
+        # print('existed', len(df_existed), df_existed[key_col].to_list())
+        print(f'kvtables check: table[{self._table}], name[{self._name}] exist:{len(keys)}/{len(df_existed)}')
         df_existed = sdf[sdf[key_col].isin(df_existed[key_col].unique())]
 
         if not df_existed.empty:
