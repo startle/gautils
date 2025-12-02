@@ -6,6 +6,8 @@ import pandas as pd
 from abc import ABC, abstractmethod
 import numpy as np
 from ..utils import batch_split, convert_url_to_windows_filename, DEBUG_OUT_DIR
+import lark_oapi as lark
+from lark_oapi.api.bitable.v1 import *
 
 FEISHU_API_ADDRESS = 'https://open.feishu.cn/open-apis/'
 
@@ -450,7 +452,7 @@ class Feishu:
             self._access_token = self.query_tenant_access_token()
         self._accessor = BaseAccessor(self._access_token, is_debug=is_debug, token_refresh_f=self.query_tenant_access_token)
     def query_tenant_access_token(self):
-        res = requests.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', params={'app_id': self._app_id, 'app_secret': self._app_secret})
+        res = requests.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', params={'app_id': self._app_id, 'app_secret': self._app_secret}, timeout=30)
         return res.json()['tenant_access_token']
 
     def query_open_id(self) -> str:

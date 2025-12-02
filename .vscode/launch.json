@@ -2,11 +2,16 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "test_utils",
+      "name": "Python: Unittest",
       "type": "debugpy",
       "request": "launch",
-      "program": "btwatch.py",
-      "console": "integratedTerminal"
+      "module": "unittest",
+      "args": ["discover"],
+      "justMyCode": true,
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
     }
   ]
 }
