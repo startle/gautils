@@ -50,7 +50,7 @@ def retry_run(f, *params, retry_times=3, sleep_s=5, **kw):
             logging.error(f"failed on {i} times...", exc_info=e)
             time.sleep(sleep_s * i)
     return None
-def retry_run2(f, retry_times=3, sleep_s=5):
+def retry_run2(f, retry_times=3, sleep_s=5) -> requests.Response:
     for i in range(retry_times):
         try:
             result = f()
@@ -68,6 +68,7 @@ def get_host(url):
         return match.group(1)  # 输出：www.example.com
     else:
         return None
+
 class CookieManager:
     def __init__(self, filename: str = 'cookies.yml'):
         self.filename = filename
@@ -90,17 +91,19 @@ class CookieManager:
         self.cookies.update(new_cookies)
         self.save_cookies()
 class Web:
-    def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None, verify=False):
+    def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None, verify=False, build_proxies_f=None):
         self.cookie_manager = CookieManager(cookies_filepath)
         self.headers = headers
         self.verify = verify
+        self.build_proxies_f = (lambda : None) if build_proxies_f is None else build_proxies_f
     def get(self, url, params=None, retry_times=3, encoding=None):
         def request(session: requests.Session, url: str):
-            return session.get(url, headers=self.headers, params=params, verify=self.verify)
+            proxies = self.build_proxies_f()
+            return session.get(url, headers=self.headers, params=params, verify=self.verify, proxies=proxies)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
     def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None):
         def request(session: requests.Session, url: str):
-            return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify)
+            return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f())
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
     def request(self, url, request_f, retry_times=3, encoding=None):
         session = requests.Session()
@@ -111,16 +114,15 @@ class Web:
             cookies = {}
         session.cookies.update(cookies)
         response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
+        if response is None:
+            return None
         self.cookie_manager.cookies[host] = cookies
-        if encoding is not None:
-            text = response.content.decode(encoding)
-            return text
-        else:
-            try :
-                return response.text
-            except Exception as e:
-                logging.error(f'response[{response}] .text error', exc_info=e)
-                return response
+        response.encoding = response.apparent_encoding if encoding is None else encoding
+        try :
+            return response.text
+        except Exception as e:
+            logging.error(f'[response.text failed.] response:\n {response}', exc_info=e)
+            return response
     def parse_url(self, url):
         from urllib.parse import urlparse, parse_qs
         parsed_url = urlparse(url)
