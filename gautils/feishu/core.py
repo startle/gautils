@@ -6,7 +6,6 @@ import pandas as pd
 from abc import ABC, abstractmethod
 import numpy as np
 from ..utils import batch_split, convert_url_to_windows_filename, DEBUG_OUT_DIR
-import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import *
 
 FEISHU_API_ADDRESS = 'https://open.feishu.cn/open-apis/'

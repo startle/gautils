@@ -250,9 +250,9 @@ class DbAlchemy(MysqlDb):
     def query(self, sql: str, *params, **kws) -> pd.DataFrame:
         logging.getLogger('mysqldb').info(f'sql: {sql}')
         with self.engine.connect() as conn:
-            result = conn.execute(text(sql), kws)
-            df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            return df
+            with conn.execute(text(sql), kws) as result:
+                df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                return df
     def __create_update_sql(self, table_name, unique_key, update_cols):
         cols = unique_key + update_cols
         cols_str = ','.join([f'`{x}`' for x in cols])
@@ -274,15 +274,15 @@ class DbAlchemy(MysqlDb):
         with self.engine.connect() as conn:
             sql = self.__create_update_sql(table, keys, cols)
             logging.getLogger('mysqldb').info(f'sql: {sql}')
-            result = conn.execute(text(sql), df.to_dict(orient='records'))
-            conn.commit()
-            return result.rowcount
+            with conn.execute(text(sql), df.to_dict(orient='records')) as result:
+                conn.commit()
+                return result.rowcount
     def execute(self, sql, *params, **kws):
         with self.engine.connect() as conn:
             logging.getLogger('mysqldb').info(f'sql: {sql}')
-            result = conn.execute(text(sql), kws)
-            conn.commit()
-            return result.rowcount
+            with conn.execute(text(sql), kws) as result:
+                conn.commit()
+                return result.rowcount
 
 def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, charset='utf8', conn_type=ConnType.COMMON, **kws) -> MysqlDb:
     kws.update({'charset': charset})
