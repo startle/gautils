@@ -10,6 +10,13 @@ import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import *
 from ..utils import batch_split
 
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="lark_oapi.ws.pb.google.__init__",
+    message="pkg_resources is deprecated as an API"
+)
+
 class _FS:
     class SHEET:
         ID = 'sheet_id'
@@ -261,7 +268,7 @@ class Table:
             return len(response.data.records)
         return sum([inner(x) for x in batch_split(df, 1000)])
     def del_rows(self):
-        return self.del_rows()
+        return self.del_rows_by_filter()
     def del_rows_by_filter(self, filter: FilterInfo = None):
         df: pd.DataFrame = self.search_records(field_names=[self.modifiable_fields[0]], filter=filter)
         if df is None or len(df) == 0:
