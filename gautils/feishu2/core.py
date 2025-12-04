@@ -1,8 +1,6 @@
+import sys
 import warnings
 import json
-from os import name
-from urllib import response
-from httpx import request
 import pandas as pd
 import numpy as np
 from enum import Enum
@@ -139,23 +137,25 @@ class Table:
             return data.has_more, data.page_token, df
         df = _query_has_more_list_by_page_token(inner)
 
-        def format(df: pd.DataFrame):
-            field_dict = self.query_fields().set_index(_FS.BITABLE.TABLE.FIELD.NAME).to_dict('index')
+        def normalize_datas_from_fs(df: pd.DataFrame, df_fields: pd.DataFrame):
+            field_dict = df_fields.set_index(_FS.BITABLE.TABLE.FIELD.NAME).to_dict('index')
 
             def read_text(v):
                 if isinstance(v, list):
-                    v = v[0]
-                    if v['type'] in {'text', 'url'}:
-                        return v['text']
+                    v0 = v[0]
+                    if v0['type'] in {'text', 'url'}:
+                        return v0['text']
                     else:
-                        return v['text']
+                        return v0['text']
                 return v
 
             def read_datetime(v):
                 if v is not None:
                     return pd.to_datetime(v, unit='ms', utc=True).tz_convert('Asia/Shanghai') if v is not None else None
+                else:
+                    return None
 
-            def transform(sr: pd.Series):
+            def normalize_by_col(sr: pd.Series):
                 FT = _FS.BITABLE.TABLE.FIELD
                 field_info = field_dict[sr.name]
                 field_type = field_info[FT.TYPE]
@@ -170,7 +170,8 @@ class Table:
                     elif field_type in [FT.V_DATETIME]:
                         return sr.apply(read_datetime)
                     elif field_type in {FT.V_REF, FT.V_FORMULA}:
-                        type_v0 = sr.iloc[0]['type']
+                        sr_valid = sr.dropna()  # dropna会同时过滤NaN和None
+                        type_v0 = sr_valid.iloc[0]['type'] if not sr_valid.empty else None
                         if type_v0 in {FT.V_NUMBER}:
                             return sr.apply(lambda x: x['value'][0] if isinstance(x, dict) else x)
                         if type_v0 in {FT.V_TEXT}:
@@ -182,13 +183,13 @@ class Table:
                     elif field_type > FT.V_TYPE_AUTO:
                         return sr
                 except Exception as e:
-                    raise ValueError(f"[readdata error]: field[{sr.name}] type[{field_type}] data:\n{sr}") from e
+                    raise ValueError(f"[readdata error]: field[{sr.name}] type[{field_type}] n_data[{len(sr)}] data:\n{sr.iloc[:5]}") from e
                 raise ValueError(f"[unsupported type]: {field_type}")
             if df is None or len(df) == 0:
                 return None
-            df = df.transform(transform, axis=0)
+            df = df.apply(normalize_by_col)
             return df
-        return format(df)
+        return normalize_datas_from_fs(df, self.query_fields())
     def insert_rows(self, df: pd.DataFrame):
         warnings.warn(
             "insert_rows()已废弃，请使用insert_records()替代",
@@ -196,13 +197,60 @@ class Table:
             stacklevel=2  # 显示调用者的代码位置，更易定位
         )
         self.insert_records(df)
+    def format_type_df_before_CU(self, df: pd.DataFrame):
+        FTF = _FS.BITABLE.TABLE.FIELD
+        for index, row in self.query_fields().iterrows():
+            _type = row[FTF.TYPE]
+            col = row[FTF.NAME]
+            if col not in df.columns:
+                continue
+            if _type in [FTF.V_TEXT, FTF.V_SSELECT]:
+                df[col] = df[col].astype(str).fillna('').replace('<NA>', '')
+            elif _type in [FTF.V_NUMBER]:
+                df[col] = df[col].astype('Float64').fillna(0).round(5)
+            elif _type in [FTF.V_DATETIME]:
+                # df[col] = pd.to_datetime(df[col])
+                # df[col] = df[col].fillna(pd.Timestamp(0))
+                # has_tz = df[col].dt.tz is not None
+                # if has_tz:
+                #     df[col] = df[col].dt.tz_convert('Asia/Shanghai')
+                # else:
+                #     df[col] = df[col].dt.tz_localize('Asia/Shanghai')
+                # df[col] = df[col].astype('Int64') // 10**6
+                # df[col] = df[col].replace(-28800000, None)  # 硬编码，将None的col转回来
+                df[col] = pd.to_datetime(df[col])
+                epoch = pd.Timestamp(0, tz='Asia/Shanghai')
+                df[col] = df[col].fillna(epoch)
+                df[col] = df[col].dt.tz_convert('Asia/Shanghai') if df[col].dt.tz is not None else df[col].dt.tz_localize('Asia/Shanghai')
+                df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
+                df[col] = df[col].replace(epoch, None)
+            elif _type in [FTF.V_MSELECT]:
+                def ensure_list(obj):
+                    if obj is None:
+                        return []
+                    elif isinstance(obj, list):
+                        return obj
+                    elif isinstance(obj, set):
+                        return list(obj)
+                    elif isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    else:
+                        return [obj]
+                df[col] = df[col].apply(ensure_list)
+            # else:
+            #     raise ValueError(f'unsupported feishu type.{_type}')
+        df: pd.DataFrame = df.replace([np.inf, -np.inf, np.nan], None)
+        return df
     def insert_records(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
             return 0
+
+        df = self.clean_df(df)
+        df = self.format_type_df_before_CU(df)
         if self.primary_fields is None or len(self.primary_fields) == 0:
             self._insert_records(df)
         else:
-            df = self.clean_df(df).drop_duplicates(subset=self.primary_fields, keep='first')
+            df = df.drop_duplicates(subset=self.primary_fields, keep='first')
 
             def build_primary_filter() -> FilterInfo:
                 FilterInfo().builder().conjunction('or').conditions([
@@ -221,7 +269,7 @@ class Table:
                 df_update = df_update.set_index(field_record_id).sort_index()
                 count += self._update_rows(df_update)
 
-                df_insert = df[df[field_record_id].isnull()]
+                df_insert = df[df[field_record_id].isnull()].drop(columns=[field_record_id])
             else:
                 df_insert = df
             count += self._insert_records(df_insert)
@@ -229,7 +277,6 @@ class Table:
     def _insert_records(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
             return 0
-        df = self.clean_df(df)
 
         def inner(df: pd.DataFrame):
             request: BatchCreateAppTableRecordRequest = BatchCreateAppTableRecordRequest.builder() \
@@ -270,17 +317,17 @@ class Table:
     def del_rows(self):
         return self.del_rows_by_filter()
     def del_rows_by_filter(self, filter: FilterInfo = None):
-        df: pd.DataFrame = self.search_records(field_names=[self.modifiable_fields[0]], filter=filter)
+        fields = [self.modifiable_fields[0]] if self.primary_fields is None else self.primary_fields
+        df: pd.DataFrame = self.search_records(field_names=fields, filter=filter)
         if df is None or len(df) == 0:
             return 0
         record_ids = df.index.to_list()
 
         def inner(record_ids: list):
-            request: BatchDeleteAppTableRecordRequest = BatchDeleteAppTableRecordRequest.builder() \
-                .app_token(self._bitable.app_token) \
-                .table_id(self.id) \
-                .request_body(BatchDeleteAppTableRecordRequestBody.builder()
-                              .records(record_ids).build()).build()
+            request: BatchDeleteAppTableRecordRequest = (BatchDeleteAppTableRecordRequest.builder()
+                                                         .app_token(self._bitable.app_token).table_id(self.id)
+                                                         .request_body(BatchDeleteAppTableRecordRequestBody.builder()
+                                                                       .records(record_ids).build())).build()
             response: BatchDeleteAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_delete(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
@@ -299,9 +346,9 @@ class Table:
         FT = _FS.BITABLE.TABLE.FIELD
         df = self.query_fields()
         df_primary = df[df[FT.DESC].notnull() & df[FT.DESC].str.startswith('Primary')]
-        if len(df) == 0:
-            # return [df[df[FT.IS_PRIMARY]].iloc[0][FT.NAME]]
+        if df_primary is None or (len(df_primary) == 0):
             return None
+        # return [df[df[FT.IS_PRIMARY]].iloc[0][FT.NAME]]
         else:
             return df_primary.sort_values([FT.DESC])[FT.NAME].to_list()
 
