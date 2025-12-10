@@ -38,6 +38,6 @@ from gautils.web import (
 from gautils.coroutine import (
     CScheduler
 )
-from gautils.feishu import (
+from gautils.feishu2 import (
     send_fs_robot_msg,
 )

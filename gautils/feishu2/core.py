@@ -115,6 +115,13 @@ class Table:
         df = df.where(~df.isin([np.inf, -np.inf, np.nan]), None)
         df = df.drop(columns=list(set(df.columns) - set(fields_modifiable)))
         return df
+    def list_records(self, filter=None, field_names: list[str] = None) -> Optional[pd.DataFrame]:
+        warnings.warn(
+            "list_records()已废弃，请使用 search_records()替代",
+            DeprecationWarning,
+            stacklevel=2  # 显示调用者的代码位置，更易定位
+        )
+        return self.search_records(field_names=field_names)
     def search_records(self, field_names: list[str] = None, sorts: list[Sort] = None, filter: FilterInfo = None) -> Optional[pd.DataFrame]:
         ''' filter = FilterInfo.builder().conjunction("and").conditions([Condition.builder()
         .field_name("ts_code").operator("isNot").value([]).build(),]

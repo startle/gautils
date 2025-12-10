@@ -118,8 +118,13 @@ def singleton(cls):
             _instance[cls] = cls(*args, **kargs)
         return _instance[cls]
     return _singleton
-def watch_process(exclude_ks=[], exclude_arg_indexes=[], kw_formatter={}, arg_index_formatter={}, threshold=1, logger_name='perf', std=False):
+def watch_process(exclude_ks=None, exclude_arg_indexes=None, kw_formatter=None, arg_index_formatter=None, threshold=1, logger_name='perf', std=False):
     ''' output to perf.logging '''
+    exclude_ks = [] if exclude_ks is None else exclude_ks
+    exclude_arg_indexes = [] if exclude_arg_indexes is None else exclude_arg_indexes
+    kw_formatter = {} if kw_formatter is None else kw_formatter
+    arg_index_formatter = {} if arg_index_formatter is None else arg_index_formatter
+
     def str_format(x):
         x_str = str(x).replace('\n', ' ')
         if len(x_str) < 150:
