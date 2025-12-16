@@ -85,6 +85,7 @@ def _query_has_more_list_by_page_token(query_f: Callable[[str], pd.DataFrame]) -
     return pd.concat(dfs) if len(dfs) > 0 else None
 
 class Table:
+    '''在列上标注释Primary可以让insert做到insert_on_duplicate_update的效果'''
     def __init__(self, bitable, table_row: pd.Series):
         self._bitable: BiTable = bitable
         self._table_row = table_row
@@ -225,12 +226,14 @@ class Table:
                 #     df[col] = df[col].dt.tz_localize('Asia/Shanghai')
                 # df[col] = df[col].astype('Int64') // 10**6
                 # df[col] = df[col].replace(-28800000, None)  # 硬编码，将None的col转回来
-                df[col] = pd.to_datetime(df[col])
-                epoch = pd.Timestamp(0, tz='Asia/Shanghai')
+                df[col] = pd.to_datetime(df[col]).astype('datetime64[ns]')
+                epoch = pd.Timestamp(0, tz='Asia/Shanghai').tz_localize(None)
                 df[col] = df[col].fillna(epoch)
+
                 df[col] = df[col].dt.tz_convert('Asia/Shanghai') if df[col].dt.tz is not None else df[col].dt.tz_localize('Asia/Shanghai')
                 df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
                 df[col] = df[col].replace(epoch, None)
+                df[col] = df[col].replace(0, None)
             elif _type in [FTF.V_MSELECT]:
                 def ensure_list(obj):
                     if obj is None:
