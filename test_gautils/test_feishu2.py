@@ -4,7 +4,7 @@ import numpy as np
 import json
 import sys
 
-from gautils.feishu2.core import BiTable, Feishu
+from gautils.feishu.core import BiTable, Feishu
 from lark_oapi.api.bitable.v1 import *
 
 class TestFeishu2(unittest.TestCase):
