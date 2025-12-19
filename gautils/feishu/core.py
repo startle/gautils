@@ -1,14 +1,19 @@
 import sys
-import requests
+import warnings
 import json
-import logging
 import pandas as pd
-from abc import ABC, abstractmethod
 import numpy as np
-from ..utils import batch_split, convert_url_to_windows_filename, DEBUG_OUT_DIR
+from enum import Enum
+import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import *
+from ..utils import batch_split
 
-FEISHU_API_ADDRESS = 'https://open.feishu.cn/open-apis/'
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="lark_oapi.ws.pb.google.__init__",
+    message="pkg_resources is deprecated as an API"
+)
 
 class _FS:
     class SHEET:
@@ -31,402 +36,365 @@ class _FS:
         class TABLE:
             ID = 'id'
             NAME = 'name'
-            class ROW:
+            REVISION = 'revision'
+            class RECORD:
                 ID = 'record_id'
             class FIELD:
                 ID = 'id'
                 NAME = 'name'
                 TYPE = 'type'
                 IS_PRIMARY = 'is_primary'
-                V_FORMULA = 20
+                DESC = 'description'
                 V_TEXT = 1
                 V_NUMBER = 2
-                V_SINGLE_SELECT = 3
-                V_MULTI_SELECT = 4
+                V_SSELECT = 3
+                V_MSELECT = 4
                 V_DATETIME = 5
+                V_FUJIAN = 17
                 V_CONN = 18  # 单向关联
-                V_REFERENCE = 19  # 查找引用
-                V_TYPE_AUTO_START_ID = 1000
+                V_REF = 19  # 查找引用
+                V_FORMULA = 20
+                V_TYPE_AUTO = 1000
+                V_TYPE_AUTO_START_ID = 1005
 
-class FeishuAccessor(ABC):
-    @abstractmethod
-    def request(self, uri, http_method='GET', params=None, json=None, **kws):
-        pass
-class BaseAccessor(FeishuAccessor):
-    def __init__(self, access_token, is_debug=True, token_refresh_f=None):
-        self._access_token = access_token
-        self._is_debug = is_debug
-        self._token_refresh_f = token_refresh_f
-    def _debug_out(self, uri, response):
-        if self._is_debug:
-            debug_file = f'{DEBUG_OUT_DIR}/{convert_url_to_windows_filename(uri)}.json'
-            with open(debug_file, 'w', encoding='utf-8') as file:
-                json.dump(response.json(), file, indent=4, ensure_ascii=False)
-    def request(self, uri, http_method='GET', params=None, json=None, timeout_s=60, **kws):
-        def inner_request(json, retry=True):
-            headers = {'Authorization': f'Bearer {self._access_token}'}
-            url = FEISHU_API_ADDRESS + uri
-            for k, v in kws.items():
-                url = url.replace(f':{k}', str(v))
-            # if json is not None:
-            #     from gautils import write_lines
-            #     print(json)
-            #     write_lines('temp/json.json', str(json))
-            res = requests.request(http_method, url, headers=headers, params=params, json=json, timeout=timeout_s)
-            result_json = res.json()
-            if ((res.status_code != 200) or (result_json['code'] != 0)) and (not retry):
-                raise ValueError(f'[request code!=0] url[{url}] code[{result_json["code"]}] {res.text}')
-            return result_json
-        result_json = inner_request(json, True)
-        if result_json['code'] != 0:
-            logging.info('rebuild accessor')
-            self._access_token = self._token_refresh_f()
-            return inner_request(json, False)
-        else:
-            return result_json
-class AccessorWrapper(BaseAccessor):
-    def __init__(self, acs: FeishuAccessor, keys=None):
-        self._acs = acs
-        self.keys = keys
-    def request(self, uri, http_method='GET', **kws):
-        if self.keys is not None:
-            kws = dict(kws)
-            kws.update(self.keys)
-        return self._acs.request(uri, http_method, **kws)
-class Spreadsheet:
-    def __init__(self, acs: FeishuAccessor, spreadsheet_token):
-        self._acs = acs
-        self._spreadsheet_token = spreadsheet_token
-    def query_rows(self, sheet_id, range) -> pd.DataFrame:
-        url = f'/sheets/v2/spreadsheets/:spreadsheet_token/values/:range'
-        range = f'{sheet_id}!{range}' if range is not None else sheet_id
-        res = self._acs.request(url, range=range)
-        datas = res['data']['valueRange']['values']
-        df = pd.DataFrame(datas[1:], columns=datas[0])
-        return df
-    def query_info(self) -> pd.DataFrame:
-        url = f'/sheets/v3/spreadsheets/:spreadsheet_token/sheets/query'
-        res = self._acs.request(url)
-        df = pd.DataFrame(pd.Series({
-            _FS.SHEET.ID: x['sheet_id'],
-            _FS.SHEET.TITLE: x['title'].strip(),
-            _FS.SHEET.COL_COUNT: x['grid_properties']['column_count'],
-            _FS.SHEET.ROW_COUNT: x['grid_properties']['row_count'],
-            _FS.SHEET.RES_TYPE: x['resource_type'],
-        }) for x in res['data']['sheets'])
-        return df
-    def query_sheet_info(self, sheet_name) -> pd.Series:
-        df_info = self.query_info()
-        infos = df_info.set_index(_FS.SHEET.TITLE).T.to_dict()
-        if sheet_name not in infos:
-            raise Exception(f'sheet not found.[{sheet_name}]')
-        return infos[sheet_name]
-    def read(self, sheet_name, range=None) -> pd.DataFrame:
-        sheet_info = self.query_sheet_info(sheet_name)
-        sheet_id = sheet_info[_FS.SHEET.ID]
-        return self.query_rows(sheet_id, range)
-class Space:
-    def __init__(self, acs: FeishuAccessor, space_series: pd.Series):
-        self._acs = acs
-        self.space_series = space_series
-    @property
-    def space_id(self):
-        return self.space_series[_FS.SPACE.ID]
-    @property
-    def space_name(self):
-        return self.space_series[_FS.SPACE.NAME]
-    def request(self, uri: str, http_method='GET', params=None, **kws):
-        kws = {'space_id': self.space_id, **kws}
-        return self._acs.request(uri, http_method=http_method, params=params, **kws)
-    def _build_node_series(self, d):
-        return pd.Series({
-            _FS.SPACE.NODE.TITLE: d['title'],
-            _FS.SPACE.NODE.NODE_TOKEN: d['node_token'],
-            _FS.SPACE.NODE.OBJ_TOKEN: d['obj_token'],
-            _FS.SPACE.NODE.OBJ_TYPE: d['obj_type'],
-            _FS.SPACE.NODE.PARENT_TOKEN: d['parent_node_token'],
-            _FS.SPACE.NODE.HAS_CHILD: d['has_child'],
-        })
-    def query_nodes(self, parent_node_token=None):
-        url = '/wiki/v2/spaces/:space_id/nodes'
-        params = {'page_size': 50, 'parent_node_token': parent_node_token}
-        res = self.request(url, space_id=self.space_id, params=params)
-        df = pd.DataFrame([self._build_node_series(x) for x in res['data']['items']])
-        return df
-    def query_node(self, path=None, parent_node_token=None) -> pd.Series:
-        if path is None or len(path) == 0:
-            uri = '/wiki/v2/spaces/get_node'
-            res = self.request(uri, params={'token': parent_node_token})
-            return self._build_node_series(res['data']['node'])
-        if isinstance(path, str):
-            path = [path]
 
-        def inner(path, parent_node_token):
-            df = self.query_nodes(parent_node_token=parent_node_token)
-            nodes = df.set_index(_FS.SPACE.NODE.TITLE).T.to_dict()
-            if path[0] not in nodes:
-                return None
-            rs = nodes[path[0]]
-            if len(path) == 1:
-                return rs
-            else:
-                return inner(path[1:], rs[_FS.SPACE.NODE.NODE_TOKEN])
-        return inner(path, parent_node_token=parent_node_token)
-    def get_node(self, path=None, parent_node_token=None):
-        sr = self.query_node(path, parent_node_token)
-        if sr is None:
-            return None
-        return Space.Node(self, sr)
-    class Node:
-        def __init__(self, space, series: pd.Series):
-            self._space: Space = space
-            self._series = series
-        def get_node(self, path):
-            self._space.get_node(path, parent_node_token=self.node_token)
-        @property
-        def node_token(self):
-            return self._series[_FS.SPACE.NODE.NODE_TOKEN]
-        @property
-        def obj_token(self):
-            return self._series[_FS.SPACE.NODE.OBJ_TOKEN]
-        @property
-        def title(self):
-            return self._series[_FS.SPACE.NODE.TITLE]
-        @property
-        def obj_type(self):
-            return self._series[_FS.SPACE.NODE.OBJ_TYPE]
-class BiTable:
-    def __init__(self, acs: FeishuAccessor, app_token):
-        self._acs = acs
-        self._app_token = app_token
-    class Table:
-        def __init__(self, acs: FeishuAccessor, table_row):
-            self._acs = acs
-            self._table_row = table_row
-            self._df_fields = None
-            self.primary_key = None
-        def query_fields(self):
-            if self._df_fields is not None:
-                return self._df_fields
-            uri = '/bitable/v1/apps/:app_token/tables/:table_id/fields'
-            res = self._acs.request(uri)
+class TableField:
+    class FieldType(Enum):
+        Text = 1
+        Number = 2
+        DanXuan = 3
+        DuoXuan = 4
+        Date = 5
+        FuXuan = 7
+        RenYuan = 11
+        DianHuaHaoMa = 13
+        ChaoLianJie = 15
+        AutoId = 1005
+
+    def __init__(self, name, fieldtype: FieldType):
+        self.name = name
+        self.fieldtype = fieldtype
+def _query_has_more_list_by_page_token(query_f: Callable[[str], pd.DataFrame]) -> pd.DataFrame:
+    dfs = []
+    has_more = True
+    page_token = None
+    while has_more:
+        has_more, page_token, df = query_f(page_token=page_token)
+        if df is not None and (len(df) > 0):
+            dfs.append(df)
+    return pd.concat(dfs) if len(dfs) > 0 else None
+
+class Table:
+    '''在列上标注释Primary可以让insert做到insert_on_duplicate_update的效果'''
+    def __init__(self, bitable, table_row: pd.Series):
+        self._bitable: BiTable = bitable
+        self._table_row = table_row
+        self._fields = None
+    def query_fields(self):
+        def inner():
+            request = ListAppTableFieldRequest.builder() \
+                .app_token(self._bitable.app_token) \
+                .table_id(self.id).build()
+            response: ListAppTableFieldResponse = self._bitable.client.bitable.v1.app_table_field.list(request)
+            if not response.success():
+                lark.logger.error(f"client.bitable.v1.app_table_field.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+                return
+            indexes = [x.field_id for x in response.data.items]
             df = pd.DataFrame([pd.Series({
-                _FS.BITABLE.TABLE.FIELD.ID: x['field_id'],
-                _FS.BITABLE.TABLE.FIELD.NAME: x['field_name'],
-                _FS.BITABLE.TABLE.FIELD.TYPE: x['type'],
-                _FS.BITABLE.TABLE.FIELD.IS_PRIMARY: x['is_primary'],
-            }) for x in res['data']['items']])
-            self._df_fields = df
+                _FS.BITABLE.TABLE.FIELD.NAME: x.field_name,
+                _FS.BITABLE.TABLE.FIELD.IS_PRIMARY: x.is_primary,
+                _FS.BITABLE.TABLE.FIELD.DESC: x.description,
+                _FS.BITABLE.TABLE.FIELD.TYPE: x.type,
+            }) for x in response.data.items], index=indexes)
             return df
-        def list_records(self, filter=None, field_names=None):
-            if field_names is not None:
-                field_names_str = ','.join([f'"{field}"' for field in field_names])
-                field_names_str = f'[{field_names_str}]'
-            else:
-                field_names_str = None
-            uri = '/bitable/v1/apps/:app_token/tables/:table_id/records'
-            page_token = None
-            all_rows = []
-            while True:
-                res = self._acs.request(uri, table_id=self.table_id, params={'page_size': 500, 'filter': filter, 'page_token': page_token, 'field_names': field_names_str})['data']
-                if 'items' not in res:
-                    break
-                all_rows.extend(res['items'])
-                if res['has_more']:
-                    page_token = res['page_token']
-                else:
-                    break
-            if len(all_rows) == 0:
-                return None
+        if self._fields is None:
+            self._fields = inner()
+        return self._fields
+    def clean_df(self, df: pd.DataFrame):
+        fields_modifiable = np.intersect1d(self.modifiable_fields, df.columns.to_list())
+        df = df.reset_index(drop=False)
+        df = df.where(~df.isin([np.inf, -np.inf, np.nan]), None)
+        df = df.drop(columns=list(set(df.columns) - set(fields_modifiable)))
+        return df
+    def list_records(self, filter=None, field_names: list[str] = None) -> Optional[pd.DataFrame]:
+        warnings.warn(
+            "list_records()已废弃，请使用 search_records()替代",
+            DeprecationWarning,
+            stacklevel=2  # 显示调用者的代码位置，更易定位
+        )
+        return self.search_records(field_names=field_names)
+    def search_records(self, field_names: list[str] = None, sorts: list[Sort] = None, filter: FilterInfo = None) -> Optional[pd.DataFrame]:
+        ''' filter = FilterInfo.builder().conjunction("and").conditions([Condition.builder()
+        .field_name("ts_code").operator("isNot").value([]).build(),]
+        ).build()'''
+        def inner(page_token=None) -> pd.DataFrame:
+            request: SearchAppTableRecordRequest = (SearchAppTableRecordRequest.builder()
+                                                    .app_token(self._bitable.app_token)
+                                                    .table_id(self.id)
+                                                    .page_token(page_token if (page_token is not None) else '')
+                                                    .page_size(500)
+                                                    .request_body(SearchAppTableRecordRequestBody.builder().field_names(field_names).sort(sorts).filter(filter).build()
+                                                                  )).build()
+            response: SearchAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.search(request)
+            if not response.success():
+                raise ValueError(f"client.bitable.v1.app_table.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            # lark.logger.info(lark.JSON.marshal(response.data, indent=4))
+            data = response.data
+            indexes = [x.record_id for x in data.items]
+            df = pd.DataFrame(data=[pd.Series({k: v for k, v in x.fields.items()}) for x in data.items], index=indexes)
+            return data.has_more, data.page_token, df
+        df = _query_has_more_list_by_page_token(inner)
 
-            def _row_to_dict(item):
-                d = {_FS.BITABLE.TABLE.ROW.ID : item['record_id']}
-                for field_name, value in item['fields'].items():
-                    d[field_name] = value
-                return d
-            df = pd.DataFrame(pd.Series(_row_to_dict(x)) for x in all_rows)
-            dict_field = self.query_fields().set_index(_FS.BITABLE.TABLE.FIELD.NAME).to_dict('index')
+        def normalize_datas_from_fs(df: pd.DataFrame, df_fields: pd.DataFrame):
+            field_dict = df_fields.set_index(_FS.BITABLE.TABLE.FIELD.NAME).to_dict('index')
 
-            def _format_row(row: pd.Series):
-                if row.name == _FS.BITABLE.TABLE.ROW.ID:
-                    return row
-                field_name = row.name
-                field_info = dict_field[field_name]
-                field_type = field_info[_FS.BITABLE.TABLE.FIELD.TYPE]
-                if field_type in [_FS.BITABLE.TABLE.FIELD.V_TEXT, _FS.BITABLE.TABLE.FIELD.V_SINGLE_SELECT]:
-                    row = row.transform(str)
-                elif field_type in [_FS.BITABLE.TABLE.FIELD.V_NUMBER]:
-                    row = row.transform(lambda value: float(value) if value is not None else None)
-                elif field_type in [_FS.BITABLE.TABLE.FIELD.V_DATETIME]:
-                    def trans_datetime(value):
-                        if value is not None:
-                            dt = pd.to_datetime(value, unit='ms', utc=True)
-                            dt = dt.tz_convert('Asia/Shanghai')
-                            value = dt
-                        else:
-                            value = None
-                        return value
-                    row = row.transform(trans_datetime)
-                elif field_type in [_FS.BITABLE.TABLE.FIELD.V_MULTI_SELECT]:
-                    row = row.transform(lambda value: value if isinstance(value, list) else [value] if (value not in [None, np.nan]) else [])
-                return row
-            df = df.apply(_format_row)
-            df.set_index(_FS.BITABLE.TABLE.ROW.ID, inplace=True)
-            return df
-        def _format_before_update(self, df: pd.DataFrame):
-            df_fields = self.query_fields()
-            for _, row_field in df_fields.iterrows():
-                col = row_field[_FS.BITABLE.TABLE.FIELD.NAME]
-                _type = row_field[_FS.BITABLE.TABLE.FIELD.TYPE]
-                if col not in df.columns:
-                    continue
-                if _type in [_FS.BITABLE.TABLE.FIELD.V_TEXT, _FS.BITABLE.TABLE.FIELD.V_SINGLE_SELECT]:
-                    df[col] = df[col].astype(str).fillna('').replace('<NA>', '')
-                elif _type in [_FS.BITABLE.TABLE.FIELD.V_NUMBER]:
-                    df[col] = df[col].astype(float).fillna(0).round(5)
-                elif _type in [_FS.BITABLE.TABLE.FIELD.V_DATETIME]:
-                    df[col] = pd.to_datetime(df[col])
-                    df[col] = df[col].fillna(pd.Timestamp(0))
-                    has_tz = df[col].dt.tz is not None
-                    if has_tz:
-                        df[col] = df[col].dt.tz_convert('Asia/Shanghai')
+            def read_text(v):
+                if isinstance(v, list):
+                    v0 = v[0]
+                    if v0['type'] in {'text', 'url'}:
+                        return v0['text']
                     else:
-                        df[col] = df[col].dt.tz_localize('Asia/Shanghai')
-                    df[col] = df[col].astype(np.int64) // 10**6
-                    df[col] = df[col].replace(-28800000, None)  # 硬编码，将None的col转回来
-                elif _type in [_FS.BITABLE.TABLE.FIELD.V_MULTI_SELECT]:
-                    def ensure_list(obj):
-                        if obj is None:
-                            return []
-                        elif isinstance(obj, list):
-                            return obj
-                        elif isinstance(obj, set):
-                            return list(obj)
-                        elif isinstance(obj, np.ndarray):
-                            return obj.tolist()
-                        else:
-                            return [obj]
-                    df[col] = df[col].apply(ensure_list)
-                else:
-                    raise ValueError(f'unsupported feishu type.{_type}')
-            return df
-        def insert_rows(self, df: pd.DataFrame):
-            if df is None or len(df) == 0:
-                return 0
-            uri = '/bitable/v1/apps/:app_token/tables/:table_id/records/batch_create'
-            fields_modifiable = np.intersect1d(self.field_names_modifiable, df.columns.to_list())
-            df = df.reset_index(drop=False)
-            df = df.where(~df.isin([np.inf, -np.inf, np.nan]), None)
-            df = df.drop(columns=list(set(df.columns) - set(fields_modifiable)))
-            df = self._format_before_update(df)
+                        return v0['text']
+                return v
 
-            def inner(df: pd.DataFrame):
-                data = {'records': [{'fields': {k: v for k, v in x.items() if (k in df.columns and v is not None)}} for x in df.to_dict(orient='records')]}
+            def read_datetime(v):
+                if v is not None:
+                    return pd.to_datetime(v, unit='ms', utc=True).tz_convert('Asia/Shanghai') if v is not None else None
+                else:
+                    return None
+
+            def normalize_by_col(sr: pd.Series):
+                FT = _FS.BITABLE.TABLE.FIELD
+                field_info = field_dict[sr.name]
+                field_type = field_info[FT.TYPE]
                 try:
-                    res = self._acs.request(uri, http_method='POST', json=data)
-                    return len(res['data']['records'])
-                except Exception as e:
-                    logging.error(f'[insert_rows] df={str(df.iloc[:10])} \ncount[{len(df)}]', exc_info=e)
-                    raise e
-            return sum([inner(x) for x in batch_split(df, 1000)])
-        def insert_on_duplicate_update_rows(self, df: pd.DataFrame):
-            if df is None or len(df) == 0:
-                return 0
-            df = df.reset_index(drop=False)
-            fields_modifiable = np.intersect1d(self.field_names_modifiable, df.columns.to_list())
-            primary_col = self.field_names_primary
-
-            def split_update_insert(df: pd.DataFrame):
-                if _FS.BITABLE.TABLE.ROW.ID in df.columns:
-                    return df[df[_FS.BITABLE.TABLE.ROW.ID].notnull()], df[df[_FS.BITABLE.TABLE.ROW.ID].isnull()]
-                else:
-                    if primary_col not in df.columns:
-                        return None, df
-                    else:
-                        df_existed = self.list_records(field_names=[primary_col])
-                        if df_existed is not None:
-                            df_existed.drop_duplicates(subset=primary_col, inplace=True, keep='first')
-                            existed_cols = df_existed[primary_col].unique()
-                            df_insert = df[~df[primary_col].isin(existed_cols)]
-                            df_update = df[df[primary_col].isin(existed_cols)]
-                            df_update = df.merge(df_existed.reset_index(drop=False), on=primary_col, how='inner')
-                            return df_update, df_insert
+                    if field_type in [FT.V_NUMBER, FT.V_SSELECT, FT.V_MSELECT, FT.V_TYPE_AUTO]:
+                        return sr
+                    elif field_type in [FT.V_TEXT]:
+                        if isinstance(sr.iloc[0], str):
+                            return sr
                         else:
-                            return None, df
-            df.drop_duplicates(subset=primary_col, inplace=True, keep='first')
-            df_update, df_insert = split_update_insert(df)
-
-            cnt = 0
-            if df_update is not None:
-                cnt += self.update_rows(df_update)
-            if df_insert is not None:
-                cnt += self.insert_rows(df_insert.loc[:, fields_modifiable])
-            return cnt
-        def update_rows(self, df: pd.DataFrame):
+                            return sr.apply(read_text)  # handle url
+                    elif field_type in [FT.V_DATETIME]:
+                        return sr.apply(read_datetime)
+                    elif field_type in {FT.V_REF, FT.V_FORMULA}:
+                        sr_valid = sr.dropna()  # dropna会同时过滤NaN和None
+                        type_v0 = sr_valid.iloc[0]['type'] if not sr_valid.empty else None
+                        if type_v0 in {FT.V_NUMBER}:
+                            return sr.apply(lambda x: x['value'][0] if isinstance(x, dict) else x)
+                        if type_v0 in {FT.V_TEXT}:
+                            return sr.apply(lambda x: read_text(x['value'] if isinstance(x, dict) else x))
+                        elif type_v0 in {FT.V_SSELECT, FT.V_MSELECT}:
+                            return sr.apply(lambda x: x['value'] if isinstance(x, dict) else x)
+                    elif field_type in [FT.V_FUJIAN]:
+                        return sr.apply(lambda x: x[0]['name'] if isinstance(x, list) else None)
+                    elif field_type > FT.V_TYPE_AUTO:
+                        return sr
+                except Exception as e:
+                    raise ValueError(f"[readdata error]: field[{sr.name}] type[{field_type}] n_data[{len(sr)}] data:\n{sr.iloc[:5]}") from e
+                raise ValueError(f"[unsupported type]: {field_type}")
             if df is None or len(df) == 0:
-                return 0
-            uri = '/bitable/v1/apps/:app_token/tables/:table_id/records/batch_update'
-            fields_modifiable = np.intersect1d(self.field_names_modifiable, df.columns.to_list()).tolist()
-            df = df.loc[:, fields_modifiable + ['record_id']]
-            df = self._format_before_update(df)
+                return None
+            df = df.apply(normalize_by_col)
+            return df
+        return normalize_datas_from_fs(df, self.query_fields())
+    def insert_rows(self, df: pd.DataFrame):
+        warnings.warn(
+            "insert_rows()已废弃，请使用insert_records()替代",
+            DeprecationWarning,
+            stacklevel=2  # 显示调用者的代码位置，更易定位
+        )
+        self.insert_records(df)
+    def format_type_df_before_CU(self, df: pd.DataFrame):
+        FTF = _FS.BITABLE.TABLE.FIELD
+        for index, row in self.query_fields().iterrows():
+            _type = row[FTF.TYPE]
+            col = row[FTF.NAME]
+            if col not in df.columns:
+                continue
+            if _type in [FTF.V_TEXT, FTF.V_SSELECT]:
+                df[col] = df[col].astype(str).fillna('').replace('<NA>', '')
+            elif _type in [FTF.V_NUMBER]:
+                df[col] = df[col].astype('Float64').fillna(0).round(5)
+            elif _type in [FTF.V_DATETIME]:
+                # df[col] = pd.to_datetime(df[col])
+                # df[col] = df[col].fillna(pd.Timestamp(0))
+                # has_tz = df[col].dt.tz is not None
+                # if has_tz:
+                #     df[col] = df[col].dt.tz_convert('Asia/Shanghai')
+                # else:
+                #     df[col] = df[col].dt.tz_localize('Asia/Shanghai')
+                # df[col] = df[col].astype('Int64') // 10**6
+                # df[col] = df[col].replace(-28800000, None)  # 硬编码，将None的col转回来
+                df[col] = pd.to_datetime(df[col]).astype('datetime64[ns]')
+                epoch = pd.Timestamp(0, tz='Asia/Shanghai').tz_localize(None)
+                df[col] = df[col].fillna(epoch)
 
-            def inner(df: pd.DataFrame):
-                data = {'records': [{'record_id': x['record_id'], 'fields': {k: v for k, v in x.items() if k in fields_modifiable and v is not None}} for x in df.to_dict(orient='records')]}
-                res = self._acs.request(uri, http_method='POST', json=data)
-                return len(res['data']['records'])
-            return sum([inner(x) for x in batch_split(df, 500)])
-        def del_rows(self, row_tokens=None, filter=None):
-            if row_tokens is None:
-                df_rows = self.list_records(filter=filter, field_names=[self.field_names[0]])
-                if df_rows is None or len(df_rows) == 0:
-                    return 0
-                row_tokens = df_rows.index.to_list()
-            if len(row_tokens) == 0:
-                return 0
-            uri = '/bitable/v1/apps/:app_token/tables/:table_id/records/batch_delete'
-            ret = True
-            for x in batch_split(row_tokens, 500):
-                res = self._acs.request(uri, http_method='POST', table_id=self.table_id, json={'records': x})
-                ret &= (res['code'] == 0)
-            return ret
-        @property
-        def field_names(self) -> pd.DataFrame:
-            return self.query_fields()[_FS.BITABLE.TABLE.FIELD.NAME].to_list()
-        @property
-        def field_names_modifiable(self):
-            df_fields = self.query_fields()
-            modifiable_cond = (df_fields[_FS.BITABLE.TABLE.FIELD.TYPE] != _FS.BITABLE.TABLE.FIELD.V_FORMULA) \
-                & (df_fields[_FS.BITABLE.TABLE.FIELD.TYPE] < _FS.BITABLE.TABLE.FIELD.V_TYPE_AUTO_START_ID) \
-                & (~df_fields[_FS.BITABLE.TABLE.FIELD.TYPE].isin([_FS.BITABLE.TABLE.FIELD.V_REFERENCE]))
-            df_fields = df_fields.loc[modifiable_cond]
-            return df_fields[_FS.BITABLE.TABLE.FIELD.NAME].tolist()
-        @property
-        def field_names_primary(self):
-            if self.primary_key is None:
-                df_fields = self.query_fields()
-                return df_fields[df_fields[_FS.BITABLE.TABLE.FIELD.IS_PRIMARY]].iloc[0][_FS.BITABLE.TABLE.FIELD.NAME]
+                df[col] = df[col].dt.tz_convert('Asia/Shanghai') if df[col].dt.tz is not None else df[col].dt.tz_localize('Asia/Shanghai')
+                df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
+                df[col] = df[col].replace(epoch, None)
+                df[col] = df[col].replace(0, None)
+            elif _type in [FTF.V_MSELECT]:
+                def ensure_list(obj):
+                    if obj is None:
+                        return []
+                    elif isinstance(obj, list):
+                        return obj
+                    elif isinstance(obj, set):
+                        return list(obj)
+                    elif isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    else:
+                        return [obj]
+                df[col] = df[col].apply(ensure_list)
+            # else:
+            #     raise ValueError(f'unsupported feishu type.{_type}')
+        df: pd.DataFrame = df.replace([np.inf, -np.inf, np.nan], None)
+        return df
+    def insert_records(self, df: pd.DataFrame):
+        if df is None or len(df) == 0:
+            return 0
+
+        df = self.clean_df(df)
+        df = self.format_type_df_before_CU(df)
+        if self.primary_fields is None or len(self.primary_fields) == 0:
+            self._insert_records(df)
+        else:
+            df = df.drop_duplicates(subset=self.primary_fields, keep='first')
+
+            def build_primary_filter() -> FilterInfo:
+                FilterInfo().builder().conjunction('or').conditions([
+                    FilterInfo().builder().conjunction('and').conditions([
+                        Condition().builder().field_name(k).operator("is").value(v).build()
+                        for k, v in row.items()]).build()
+                    for _, row in df[self.primary_fields].iterrows()]).build()
+            finfo: FilterInfo = build_primary_filter()
+            df_existed = self.search_records(field_names=self.primary_fields, filter=finfo)
+            count = 0
+            if df_existed is not None and len(df_existed) > 0:
+                field_record_id = _FS.BITABLE.TABLE.RECORD.ID
+                df_existed.reset_index(names=field_record_id, inplace=True)
+                df = df.merge(df_existed, on=self.primary_fields, how='left')
+                df_update = df[df[field_record_id].notnull()]
+                df_update = df_update.set_index(field_record_id).sort_index()
+                count += self._update_rows(df_update)
+
+                df_insert = df[df[field_record_id].isnull()].drop(columns=[field_record_id])
             else:
-                return self.primary_key
-        @property
-        def table_id(self):
-            return self._table_row[_FS.BITABLE.TABLE.ID]
-        @property
-        def table_name(self):
-            return self._table_row[_FS.BITABLE.TABLE.NAME]
+                df_insert = df
+            count += self._insert_records(df_insert)
+            return count
+    def _insert_records(self, df: pd.DataFrame):
+        if df is None or len(df) == 0:
+            return 0
+
+        def inner(df: pd.DataFrame):
+            request: BatchCreateAppTableRecordRequest = BatchCreateAppTableRecordRequest.builder() \
+                .app_token(self._bitable.app_token) \
+                .table_id(self.id) \
+                .request_body(BatchCreateAppTableRecordRequestBody.builder()
+                              .records([AppTableRecord.builder()
+                                        .fields({k: v for k, v in row.items() if v is not None}).build()
+                                        for _, row in df.iterrows()]).build()
+                              ).build()
+            response: BatchCreateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_create(request)
+            if not response.success():
+                lark.logger.error(f"client.bitable.v1.app_table_record.batch_create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            # lark.logger.info(f"client.bitable.v1.app_table_record.batch_create success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return len(df)
+        return sum([inner(x) for x in batch_split(df, 1000)])
+    def _update_rows(self, df: pd.DataFrame):
+        if df is None or len(df) == 0:
+            return 0
+
+        def inner(df: pd.DataFrame):
+            request: BatchUpdateAppTableRecordRequest = (BatchUpdateAppTableRecordRequest.builder()
+                                                         .app_token(self._bitable.app_token)
+                                                         .table_id(self.id)
+                                                         .request_body(BatchUpdateAppTableRecordRequestBody.builder()
+                                                                       .records([
+                                                                           AppTableRecord.builder()
+                                                                           .fields({k: v for k, v in row.items() if v is not None}).record_id(index).build()
+                                                                           for index, row in df.iterrows()])
+                                                                       .build())
+                                                         ).build()
+            response: BatchUpdateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_update(request)
+            if not response.success():
+                lark.logger.error(f"client.bitable.v1.app_table_record.batch_update failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            # lark.logger.info(f"client.bitable.v1.app_table_record.batch_update success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return len(response.data.records)
+        return sum([inner(x) for x in batch_split(df, 1000)])
+    def del_rows(self):
+        return self.del_rows_by_filter()
+    def del_rows_by_filter(self, filter: FilterInfo = None):
+        fields = [self.modifiable_fields[0]] if self.primary_fields is None else self.primary_fields
+        df: pd.DataFrame = self.search_records(field_names=fields, filter=filter)
+        if df is None or len(df) == 0:
+            return 0
+        record_ids = df.index.to_list()
+
+        def inner(record_ids: list):
+            request: BatchDeleteAppTableRecordRequest = (BatchDeleteAppTableRecordRequest.builder()
+                                                         .app_token(self._bitable.app_token).table_id(self.id)
+                                                         .request_body(BatchDeleteAppTableRecordRequestBody.builder()
+                                                                       .records(record_ids).build())).build()
+            response: BatchDeleteAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_delete(request)
+            if not response.success():
+                lark.logger.error(f"client.bitable.v1.app_table_record.batch_delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            # lark.logger.info(f"client.bitable.v1.app_table_record.batch_delete success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return len(response.data.records)
+        return sum([inner(x) for x in batch_split(record_ids, 500)])
+    @property
+    def id(self):
+        return self._table_row[_FS.BITABLE.TABLE.ID]
+    @property
+    def name(self):
+        return self._table_row[_FS.BITABLE.TABLE.NAME]
+    @property
+    def primary_fields(self):
+        '''在字段注释中备注"Primary{n}"即可标记为主键,n的大小决定优先级 '''
+        FT = _FS.BITABLE.TABLE.FIELD
+        df = self.query_fields()
+        df_primary = df[df[FT.DESC].notnull() & df[FT.DESC].str.startswith('Primary')]
+        if df_primary is None or (len(df_primary) == 0):
+            return None
+        # return [df[df[FT.IS_PRIMARY]].iloc[0][FT.NAME]]
+        else:
+            return df_primary.sort_values([FT.DESC])[FT.NAME].to_list()
+
+    @property
+    def modifiable_fields(self):
+        df_fields = self.query_fields()
+        FT = _FS.BITABLE.TABLE.FIELD
+        modifiable_cond = (~df_fields[FT.TYPE].isin({FT.V_FORMULA, FT.V_REF})) \
+            & (df_fields[FT.TYPE] < FT.V_TYPE_AUTO)
+        df_fields = df_fields.loc[modifiable_cond]
+        return df_fields[FT.NAME].tolist()
+
+class BiTable:
+    def __init__(self, client, app_token: str):
+        self.client: lark.client.Client = client
+        self.app_token = app_token
+        self._tables = None
+    def create_table(self, table_name: str, table_fields: list[TableField]):
+        fields = [AppTableCreateHeader.builder().field_name(x.name).type(x.fieldtype.value).build() for x in table_fields]
+        request: CreateAppTableRequest = CreateAppTableRequest.builder() \
+            .app_token(self.app_token) \
+            .request_body(CreateAppTableRequestBody.builder()
+                          .table(ReqTable.builder().name(table_name).default_view_name("默认视图").fields(fields).build())
+                          .build()) \
+            .build()
+        response: CreateAppTableResponse = self.client.bitable.v1.app_table.create(request)
+        if not response.success():
+            lark.logger.error(f"client.bitable.v1.app_table.create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return
+        # lark.logger.info(lark.JSON.marshal(response.data, indent=4))
     def get_table(self, table_name=None, table_id=None) -> Table:
         table_row = self.query_table(table_id=table_id, table_name=table_name)
         if table_row is None:
             return None
-        return BiTable.Table(AccessorWrapper(self._acs, keys={'table_id': table_row[_FS.BITABLE.TABLE.ID]}), table_row)
-    def query_tables(self) -> pd.DataFrame:
-        uri = '/bitable/v1/apps/:app_token/tables'
-        res = self._acs.request(uri)
-        df = pd.DataFrame(pd.Series({
-            _FS.BITABLE.TABLE.ID: x['table_id'],
-            _FS.BITABLE.TABLE.NAME: x['name'],
-        }) for x in res['data']['items'])
-        return df
-    def query_table(self, table_name=None, table_id=None) -> str:
+        return Table(self, table_row)
+    def query_table(self, table_id=None, table_name=None) -> str:
         df_table = self.query_tables()
         if df_table is None or len(df_table) == 0:
             return None
@@ -437,50 +405,28 @@ class BiTable:
             if table_name in df_table[_FS.BITABLE.TABLE.NAME].to_list():
                 return df_table[df_table[_FS.BITABLE.TABLE.NAME] == table_name].iloc[0]
         return None
-    @property
-    def obj_token(self):
-        return self._app_token
+    def query_tables(self) -> pd.DataFrame:
+        def inner():
+            ''' fixme: 要处理has_more '''
+            request: ListAppTableRequest = ListAppTableRequest.builder() \
+                .app_token(self.app_token) \
+                .page_size(100).build()
+            response: ListAppTableResponse = self.client.bitable.v1.app_table.list(request)
+            if not response.success():
+                lark.logger.error(f"client.bitable.v1.app_table.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+                return
+            j = response.data
+            return pd.DataFrame(pd.Series({_FS.BITABLE.TABLE.NAME: x.name, _FS.BITABLE.TABLE.ID: x.table_id, _FS.BITABLE.TABLE.REVISION: x.revision}) for x in j.items)
+        if self._tables is None:
+            self._tables = inner()
+        return self._tables
+
 class Feishu:
-    ''' 飞书多维表格操作 '''
-    def __init__(self, app_id=None, app_secret=None, access_token=None, is_debug=True):
-        if access_token is not None:
-            self._access_token = access_token
-        else:
-            self._app_id = app_id
-            self._app_secret = app_secret
-            self._access_token = self.query_tenant_access_token()
-        self._accessor = BaseAccessor(self._access_token, is_debug=is_debug, token_refresh_f=self.query_tenant_access_token)
-    def query_tenant_access_token(self):
-        res = requests.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', params={'app_id': self._app_id, 'app_secret': self._app_secret}, timeout=30)
-        return res.json()['tenant_access_token']
-
-    def query_open_id(self) -> str:
-        data = self._accessor.request('/bot/v3/info')
-        return data['bot']['open_id']
-    def query_spaces(self):
-        uri = '/wiki/v2/spaces'
-        res = self._accessor.request(uri, params={'page_size': 50})
-        df = pd.DataFrame(pd.Series({
-            _FS.SPACE.ID: x['space_id'],
-            _FS.SPACE.NAME: x['name'],
-        }) for x in res['data']['items'])
-        return df
-
-    def get_spreadsheet(self, spreadsheet_token) -> Spreadsheet:
-        return Spreadsheet(AccessorWrapper(self._accessor, keys={'spreadsheet_token': spreadsheet_token}), spreadsheet_token)
-    def get_space(self, space_id=None, space_name=None) -> Space:
-        df = self.query_spaces()
-        if space_id is not None:
-            df.set_index(_FS.SPACE.ID, inplace=True)
-            if space_id not in df.index.to_list():
-                return None
-            return Space(self._accessor, df.loc[space_id])
-        elif space_name is not None:
-            df.set_index(_FS.SPACE.NAME, inplace=True)
-            if space_name not in df.index.to_list():
-                return None
-            return Space(self._accessor, df.loc[space_name])
-    def get_bitable(self, app_token) -> BiTable:
-        return BiTable(AccessorWrapper(self._accessor, keys={'app_token': app_token}), app_token)
-    def get_bitable_from_space(self, space_name, path):
-        return self.get_bitable(self.get_space(space_name=space_name).get_node(path).obj_token)
+    def __init__(self, app_id: str = None, app_secret: str = None, log_level=lark.LogLevel.INFO):
+        self.client = lark.Client.builder() \
+            .app_id(app_id=app_id) \
+            .app_secret(app_secret=app_secret) \
+            .log_level(log_level) \
+            .build()
+    def get_bitable(self, app_token):
+        return BiTable(self.client, app_token)
