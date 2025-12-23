@@ -1,4 +1,5 @@
 import sys
+from typing import Literal
 import warnings
 import json
 import pandas as pd
@@ -6,6 +7,7 @@ import numpy as np
 from enum import Enum
 import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import *
+from lark_oapi.api.wiki.v2 import *
 from ..utils import batch_split
 
 warnings.filterwarnings(
@@ -56,7 +58,6 @@ class _FS:
                 V_FORMULA = 20
                 V_TYPE_AUTO = 1000
                 V_TYPE_AUTO_START_ID = 1005
-
 
 class TableField:
     class FieldType(Enum):
@@ -342,6 +343,8 @@ class Table:
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
             # lark.logger.info(f"client.bitable.v1.app_table_record.batch_delete success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            if response.data is None:
+                return 0
             return len(response.data.records)
         return sum([inner(x) for x in batch_split(record_ids, 500)])
     @property
@@ -370,7 +373,6 @@ class Table:
             & (df_fields[FT.TYPE] < FT.V_TYPE_AUTO)
         df_fields = df_fields.loc[modifiable_cond]
         return df_fields[FT.NAME].tolist()
-
 class BiTable:
     def __init__(self, client, app_token: str):
         self.client: lark.client.Client = client
@@ -420,7 +422,6 @@ class BiTable:
         if self._tables is None:
             self._tables = inner()
         return self._tables
-
 class Feishu:
     def __init__(self, app_id: str = None, app_secret: str = None, log_level=lark.LogLevel.INFO):
         self.client = lark.Client.builder() \
@@ -430,3 +431,12 @@ class Feishu:
             .build()
     def get_bitable(self, app_token):
         return BiTable(self.client, app_token)
+    def query_from_space(self, wiki_token, obj_type: Literal['docx', 'sheet', 'bitable']) -> pd.DataFrame:
+        request: GetNodeSpaceRequest = GetNodeSpaceRequest.builder().token(wiki_token).obj_type(obj_type).build()
+        response: GetNodeSpaceResponse = self.client.wiki.v2.space.get_node(request)
+        if not response.success():
+            lark.logger.error(
+                f"client.wiki.v2.space.get_node failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return
+        lark.logger.info(lark.JSON.marshal(response.data, indent=4))
+        return None
