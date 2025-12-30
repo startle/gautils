@@ -52,6 +52,7 @@ class _FS:
                 V_SSELECT = 3
                 V_MSELECT = 4
                 V_DATETIME = 5
+                V_FUXUAN = 7
                 V_FUJIAN = 17
                 V_CONN = 18  # 单向关联
                 V_REF = 19  # 查找引用
@@ -169,7 +170,7 @@ class Table:
                 field_info = field_dict[sr.name]
                 field_type = field_info[FT.TYPE]
                 try:
-                    if field_type in [FT.V_NUMBER, FT.V_SSELECT, FT.V_MSELECT, FT.V_TYPE_AUTO]:
+                    if field_type in [FT.V_NUMBER, FT.V_SSELECT, FT.V_MSELECT, FT.V_TYPE_AUTO, FT.V_FUXUAN]:
                         return sr
                     elif field_type in [FT.V_TEXT]:
                         if isinstance(sr.iloc[0], str):
@@ -268,7 +269,7 @@ class Table:
                     FilterInfo().builder().conjunction('and').conditions([
                         Condition().builder().field_name(k).operator("is").value(v).build()
                         for k, v in row.items()]).build()
-                    for _, row in df[self.primary_fields].iterrows()]).build()
+                    for _, row in df.loc[:, self.primary_fields].iterrows()]).build()
             finfo: FilterInfo = build_primary_filter()
             df_existed = self.search_records(field_names=self.primary_fields, filter=finfo)
             count = 0
