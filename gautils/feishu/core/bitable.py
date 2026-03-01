@@ -1,14 +1,13 @@
-import sys
-from typing import Literal
 import warnings
 import json
 import pandas as pd
 import numpy as np
 from enum import Enum
+from typing import Callable, Optional
 import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import *
-from lark_oapi.api.wiki.v2 import *
-from ..utils import batch_split
+from lark_oapi.api.drive.v1 import CreatePermissionMemberRequest, CreatePermissionMemberResponse
+from ...utils import batch_split
 
 warnings.filterwarnings(
     "ignore",
@@ -17,23 +16,8 @@ warnings.filterwarnings(
     message="pkg_resources is deprecated as an API"
 )
 
+
 class _FS:
-    class SHEET:
-        ID = 'sheet_id'
-        TITLE = 'sheet_title'
-        COL_COUNT = 'sheet_cols'
-        ROW_COUNT = 'sheet_rows'
-        RES_TYPE = 'res_type'
-    class SPACE:
-        ID = 'space_id'
-        NAME = 'name'
-        class NODE:
-            NODE_TOKEN = 'node_token'
-            OBJ_TOKEN = 'obj_token'
-            TITLE = 'title'
-            HAS_CHILD = 'has_child'
-            OBJ_TYPE = 'obj_type'
-            PARENT_TOKEN = 'parent_node_token'
     class BITABLE:
         class TABLE:
             ID = 'id'
@@ -53,12 +37,16 @@ class _FS:
                 V_MSELECT = 4
                 V_DATETIME = 5
                 V_FUXUAN = 7
+                V_RENYUAN = 11  # 人员
+                V_DIANHUA = 13  # 电话号码
+                V_CHAOLIANJIE = 15  # 超链接
                 V_FUJIAN = 17
                 V_CONN = 18  # 单向关联
                 V_REF = 19  # 查找引用
                 V_FORMULA = 20
                 V_TYPE_AUTO = 1000
                 V_TYPE_AUTO_START_ID = 1005
+
 
 class TableField:
     class FieldType(Enum):
@@ -76,6 +64,8 @@ class TableField:
     def __init__(self, name, fieldtype: FieldType):
         self.name = name
         self.fieldtype = fieldtype
+
+
 def _query_has_more_list_by_page_token(query_f: Callable[[str], pd.DataFrame]) -> pd.DataFrame:
     dfs = []
     has_more = True
@@ -86,12 +76,14 @@ def _query_has_more_list_by_page_token(query_f: Callable[[str], pd.DataFrame]) -
             dfs.append(df)
     return pd.concat(dfs) if len(dfs) > 0 else None
 
+
 class Table:
     '''在列上标注释Primary可以让insert做到insert_on_duplicate_update的效果'''
     def __init__(self, bitable, table_row: pd.Series):
         self._bitable: BiTable = bitable
         self._table_row = table_row
         self._fields = None
+
     def query_fields(self):
         def inner():
             request = ListAppTableFieldRequest.builder() \
@@ -112,19 +104,22 @@ class Table:
         if self._fields is None:
             self._fields = inner()
         return self._fields
+
     def clean_df(self, df: pd.DataFrame):
         fields_modifiable = np.intersect1d(self.modifiable_fields, df.columns.to_list())
         df = df.reset_index(drop=False)
         df = df.where(~df.isin([np.inf, -np.inf, np.nan]), None)
         df = df.drop(columns=list(set(df.columns) - set(fields_modifiable)))
         return df
+
     def list_records(self, filter=None, field_names: list[str] = None) -> Optional[pd.DataFrame]:
         warnings.warn(
             "list_records()已废弃，请使用 search_records()替代",
             DeprecationWarning,
-            stacklevel=2  # 显示调用者的代码位置，更易定位
+            stacklevel=2
         )
         return self.search_records(field_names=field_names)
+
     def search_records(self, field_names: list[str] = None, sorts: list[Sort] = None, filter: FilterInfo = None) -> Optional[pd.DataFrame]:
         ''' filter = FilterInfo.builder().conjunction("and").conditions([Condition.builder()
         .field_name("ts_code").operator("isNot").value([]).build(),]
@@ -140,7 +135,6 @@ class Table:
             response: SearchAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.search(request)
             if not response.success():
                 raise ValueError(f"client.bitable.v1.app_table.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-            # lark.logger.info(lark.JSON.marshal(response.data, indent=4))
             data = response.data
             indexes = [x.record_id for x in data.items]
             df = pd.DataFrame(data=[pd.Series({k: v for k, v in x.fields.items()}) for x in data.items], index=indexes)
@@ -176,11 +170,20 @@ class Table:
                         if isinstance(sr.iloc[0], str):
                             return sr
                         else:
-                            return sr.apply(read_text)  # handle url
+                            return sr.apply(read_text)
                     elif field_type in [FT.V_DATETIME]:
                         return sr.apply(read_datetime)
+                    elif field_type in [FT.V_RENYUAN]:
+                        # 人员字段: [{'name': 'xxx', 'en_name': 'xxx', 'id': 'xxx'}]
+                        return sr.apply(lambda x: [p.get('name', '') for p in x] if isinstance(x, list) else [])
+                    elif field_type in [FT.V_DIANHUA]:
+                        # 电话号码字段: {'phone_number': 'xxx'}
+                        return sr.apply(lambda x: x.get('phone_number', '') if isinstance(x, dict) else x)
+                    elif field_type in [FT.V_CHAOLIANJIE]:
+                        # 超链接字段: {'text': 'xxx', 'link': 'xxx'}
+                        return sr.apply(lambda x: x if isinstance(x, dict) else {})
                     elif field_type in {FT.V_REF, FT.V_FORMULA}:
-                        sr_valid = sr.dropna()  # dropna会同时过滤NaN和None
+                        sr_valid = sr.dropna()
                         type_v0 = sr_valid.iloc[0]['type'] if not sr_valid.empty else None
                         if type_v0 in {FT.V_NUMBER}:
                             return sr.apply(lambda x: x['value'][0] if isinstance(x, dict) else x)
@@ -200,13 +203,15 @@ class Table:
             df = df.apply(normalize_by_col)
             return df
         return normalize_datas_from_fs(df, self.query_fields())
+
     def insert_rows(self, df: pd.DataFrame):
         warnings.warn(
             "insert_rows()已废弃，请使用insert_records()替代",
             DeprecationWarning,
-            stacklevel=2  # 显示调用者的代码位置，更易定位
+            stacklevel=2
         )
         self.insert_records(df)
+
     def format_type_df_before_CU(self, df: pd.DataFrame):
         FTF = _FS.BITABLE.TABLE.FIELD
         for index, row in self.query_fields().iterrows():
@@ -219,19 +224,9 @@ class Table:
             elif _type in [FTF.V_NUMBER]:
                 df[col] = df[col].astype('Float64').fillna(0).round(5)
             elif _type in [FTF.V_DATETIME]:
-                # df[col] = pd.to_datetime(df[col])
-                # df[col] = df[col].fillna(pd.Timestamp(0))
-                # has_tz = df[col].dt.tz is not None
-                # if has_tz:
-                #     df[col] = df[col].dt.tz_convert('Asia/Shanghai')
-                # else:
-                #     df[col] = df[col].dt.tz_localize('Asia/Shanghai')
-                # df[col] = df[col].astype('Int64') // 10**6
-                # df[col] = df[col].replace(-28800000, None)  # 硬编码，将None的col转回来
                 df[col] = pd.to_datetime(df[col]).astype('datetime64[ns]')
                 epoch = pd.Timestamp(0, tz='Asia/Shanghai').tz_localize(None)
                 df[col] = df[col].fillna(epoch)
-
                 df[col] = df[col].dt.tz_convert('Asia/Shanghai') if df[col].dt.tz is not None else df[col].dt.tz_localize('Asia/Shanghai')
                 df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
                 df[col] = df[col].replace(epoch, None)
@@ -249,10 +244,9 @@ class Table:
                     else:
                         return [obj]
                 df[col] = df[col].apply(ensure_list)
-            # else:
-            #     raise ValueError(f'unsupported feishu type.{_type}')
         df: pd.DataFrame = df.replace([np.inf, -np.inf, np.nan], None)
         return df
+
     def insert_records(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
             return 0
@@ -280,12 +274,12 @@ class Table:
                 df_update = df[df[field_record_id].notnull()]
                 df_update = df_update.set_index(field_record_id).sort_index()
                 count += self._update_rows(df_update)
-
                 df_insert = df[df[field_record_id].isnull()].drop(columns=[field_record_id])
             else:
                 df_insert = df
             count += self._insert_records(df_insert)
             return count
+
     def _insert_records(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
             return 0
@@ -302,9 +296,9 @@ class Table:
             response: BatchCreateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_create(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-            # lark.logger.info(f"client.bitable.v1.app_table_record.batch_create success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
             return len(df)
         return sum([inner(x) for x in batch_split(df, 1000)])
+
     def _update_rows(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
             return 0
@@ -323,11 +317,12 @@ class Table:
             response: BatchUpdateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_update(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_update failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-            # lark.logger.info(f"client.bitable.v1.app_table_record.batch_update success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
             return len(response.data.records)
         return sum([inner(x) for x in batch_split(df, 1000)])
+
     def del_rows(self):
         return self.del_rows_by_filter()
+
     def del_rows_by_filter(self, filter: FilterInfo = None):
         fields = [self.modifiable_fields[0]] if self.primary_fields is None else self.primary_fields
         df: pd.DataFrame = self.search_records(field_names=fields, filter=filter)
@@ -343,17 +338,19 @@ class Table:
             response: BatchDeleteAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_delete(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-            # lark.logger.info(f"client.bitable.v1.app_table_record.batch_delete success, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
             if response.data is None:
                 return 0
             return len(response.data.records)
         return sum([inner(x) for x in batch_split(record_ids, 500)])
+
     @property
     def id(self):
         return self._table_row[_FS.BITABLE.TABLE.ID]
+
     @property
     def name(self):
         return self._table_row[_FS.BITABLE.TABLE.NAME]
+
     @property
     def primary_fields(self):
         '''在字段注释中备注"Primary{n}"即可标记为主键,n的大小决定优先级 '''
@@ -362,7 +359,6 @@ class Table:
         df_primary = df[df[FT.DESC].notnull() & df[FT.DESC].str.startswith('Primary')]
         if df_primary is None or (len(df_primary) == 0):
             return None
-        # return [df[df[FT.IS_PRIMARY]].iloc[0][FT.NAME]]
         else:
             return df_primary.sort_values([FT.DESC])[FT.NAME].to_list()
 
@@ -374,12 +370,58 @@ class Table:
             & (df_fields[FT.TYPE] < FT.V_TYPE_AUTO)
         df_fields = df_fields.loc[modifiable_cond]
         return df_fields[FT.NAME].tolist()
+
+
 class BiTable:
     def __init__(self, client, app_token: str):
         self.client: lark.client.Client = client
         self.app_token = app_token
         self._tables = None
-    def create_table(self, table_name: str, table_fields: list[TableField]):
+
+    def add_collaborator(self, member_id: str, member_id_type: str = 'openid', perm: str = 'full_access'):
+        '''添加协作者（基础权限模式）
+        member_id: 用户标识
+        member_id_type: 标识类型，openid/userid/unionid/email
+        perm: 权限，full_access(完全权限)/edit(可编辑)/view(可查看)/comment(可评论)
+        '''
+        request = CreatePermissionMemberRequest.builder() \
+            .token(self.app_token) \
+            .type('bitable') \
+            .need_notification(False) \
+            .request_body({
+                'member_type': member_id_type,
+                'member_id': member_id,
+                'perm': perm
+            }) \
+            .build()
+        response: CreatePermissionMemberResponse = self.client.drive.v1.permission_member.create(request)
+        if not response.success():
+            lark.logger.error(f"client.drive.v1.permission_member.create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return False
+        return True
+
+    def delete_table(self, table_name: str = None, table_id: str = None):
+        '''删除表格'''
+        if table_id is None:
+            if table_name is None:
+                raise ValueError('table_name or table_id is required')
+            table_row = self.query_table(table_name=table_name)
+            if table_row is None:
+                return True
+            table_id = table_row[_FS.BITABLE.TABLE.ID]
+
+        request = DeleteAppTableRequest.builder() \
+            .app_token(self.app_token) \
+            .table_id(table_id) \
+            .build()
+        response: DeleteAppTableResponse = self.client.bitable.v1.app_table.delete(request)
+        if not response.success():
+            lark.logger.error(f"client.bitable.v1.app_table.delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            return False
+        self._tables = None  # 清除缓存
+        return True
+
+    def create_table(self, table_name: str, table_fields: list[TableField]) -> 'Table':
         fields = [AppTableCreateHeader.builder().field_name(x.name).type(x.fieldtype.value).build() for x in table_fields]
         request: CreateAppTableRequest = CreateAppTableRequest.builder() \
             .app_token(self.app_token) \
@@ -390,13 +432,16 @@ class BiTable:
         response: CreateAppTableResponse = self.client.bitable.v1.app_table.create(request)
         if not response.success():
             lark.logger.error(f"client.bitable.v1.app_table.create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-            return
-        # lark.logger.info(lark.JSON.marshal(response.data, indent=4))
+            return None
+        self._tables = None  # 清除缓存
+        return self.get_table(table_name=table_name)
+
     def get_table(self, table_name=None, table_id=None) -> Table:
         table_row = self.query_table(table_id=table_id, table_name=table_name)
         if table_row is None:
             return None
         return Table(self, table_row)
+
     def query_table(self, table_id=None, table_name=None) -> str:
         df_table = self.query_tables()
         if df_table is None or len(df_table) == 0:
@@ -408,6 +453,7 @@ class BiTable:
             if table_name in df_table[_FS.BITABLE.TABLE.NAME].to_list():
                 return df_table[df_table[_FS.BITABLE.TABLE.NAME] == table_name].iloc[0]
         return None
+
     def query_tables(self) -> pd.DataFrame:
         def inner():
             ''' fixme: 要处理has_more '''
@@ -423,21 +469,3 @@ class BiTable:
         if self._tables is None:
             self._tables = inner()
         return self._tables
-class Feishu:
-    def __init__(self, app_id: str = None, app_secret: str = None, log_level=lark.LogLevel.INFO):
-        self.client = lark.Client.builder() \
-            .app_id(app_id=app_id) \
-            .app_secret(app_secret=app_secret) \
-            .log_level(log_level) \
-            .build()
-    def get_bitable(self, app_token):
-        return BiTable(self.client, app_token)
-    def query_from_space(self, wiki_token, obj_type: Literal['docx', 'sheet', 'bitable']) -> pd.DataFrame:
-        request: GetNodeSpaceRequest = GetNodeSpaceRequest.builder().token(wiki_token).obj_type(obj_type).build()
-        response: GetNodeSpaceResponse = self.client.wiki.v2.space.get_node(request)
-        if not response.success():
-            lark.logger.error(
-                f"client.wiki.v2.space.get_node failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-            return
-        lark.logger.info(lark.JSON.marshal(response.data, indent=4))
-        return None
