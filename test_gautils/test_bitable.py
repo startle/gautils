@@ -8,7 +8,7 @@ import time
 from gautils.feishu.core import BiTable, Feishu, TableField
 from lark_oapi.api.bitable.v1 import *
 
-class TestFeishu(unittest.TestCase):
+class TestBiTable(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.fs = Feishu('cli_a5e0366e397cd00e', 'abi2ikgvkTDr2V3K8aykphJfVC0YUrGR')
@@ -143,7 +143,7 @@ class TestFeishu(unittest.TestCase):
 
         # 测试数字过滤
         f_number = FilterInfo.builder().conjunction('and').conditions([
-            Condition.builder().field_name('数字').operator('isGreaterThan').value([150]).build(),
+            Condition.builder().field_name('数字').operator('isGreater').value([150]).build(),
         ]).build()
         result = self.table.search_records(filter=f_number)
         print(f'数字>150: {len(result) if result is not None else 0} 条')
