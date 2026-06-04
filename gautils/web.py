@@ -7,6 +7,9 @@ import requests
 
 log = logging.getLogger(__name__)
 
+# (连接超时, 读取超时) 秒。connect 短，连不上即弃；read 宽，容忍慢响应接口
+DEFAULT_TIMEOUT = (5, 30)
+
 ##################  http  #######################
 def request_regular_fetch(pattern, url, params=None, headers=None):
     try:
@@ -96,14 +99,14 @@ class Web:
         self.headers = headers
         self.verify = verify
         self.build_proxies_f = (lambda : None) if build_proxies_f is None else build_proxies_f
-    def get(self, url, params=None, retry_times=3, encoding=None):
+    def get(self, url, params=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT):
         def request(session: requests.Session, url: str):
             proxies = self.build_proxies_f()
-            return session.get(url, headers=self.headers, params=params, verify=self.verify, proxies=proxies)
+            return session.get(url, headers=self.headers, params=params, verify=self.verify, proxies=proxies, timeout=timeout)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
-    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None):
+    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT):
         def request(session: requests.Session, url: str):
-            return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f())
+            return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f(), timeout=timeout)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
     def request(self, url, request_f, retry_times=3, encoding=None):
         session = requests.Session()
