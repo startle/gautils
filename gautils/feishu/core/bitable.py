@@ -212,6 +212,30 @@ class Table:
         )
         self.insert_records(df)
 
+    # 飞书 bitable 文本字段单元格上限约 10 万字符，留余量到 5 万避免 TooLargeCell(1254130)
+    _TEXT_CELL_MAX = 50000
+
+    def _dump_oversized_cells(self, df: pd.DataFrame, op: str, top_n: int = 5):
+        '''TooLargeCell(1254130) 触发时,定位是哪行哪列过大,打印前 top_n 个最大单元格'''
+        try:
+            sizes = []
+            for ridx, row in df.iterrows():
+                for col, val in row.items():
+                    if val is None:
+                        continue
+                    try:
+                        s = len(json.dumps(val, ensure_ascii=False, default=str))
+                    except Exception:
+                        s = len(str(val))
+                    sizes.append((s, str(ridx), col, type(val).__name__))
+            sizes.sort(reverse=True)
+            lark.logger.error(
+                f"[bitable.{op}] table[{self.name}] TooLargeCell 诊断,共{len(df)}行,top{top_n}大单元格:")
+            for s, ridx, col, tname in sizes[:top_n]:
+                lark.logger.error(f"  row[{ridx}] col[{col}] type[{tname}] size={s}")
+        except Exception as e:
+            lark.logger.error(f"[bitable.{op}] dump 失败: {e}")
+
     def format_type_df_before_CU(self, df: pd.DataFrame):
         FTF = _FS.BITABLE.TABLE.FIELD
         for index, row in self.query_fields().iterrows():
@@ -221,6 +245,13 @@ class Table:
                 continue
             if _type in [FTF.V_TEXT, FTF.V_SSELECT]:
                 df[col] = df[col].astype(str).fillna('').replace('<NA>', '')
+                over_mask = df[col].str.len() > self._TEXT_CELL_MAX
+                if over_mask.any():
+                    max_len = int(df.loc[over_mask, col].str.len().max())
+                    lark.logger.warning(
+                        f"[bitable] table[{self.name}] col[{col}] {int(over_mask.sum())}行文本超长(max={max_len}),已截断到{self._TEXT_CELL_MAX}"
+                    )
+                    df.loc[over_mask, col] = df.loc[over_mask, col].str.slice(0, self._TEXT_CELL_MAX)
             elif _type in [FTF.V_NUMBER]:
                 df[col] = df[col].astype('Float64').fillna(0).round(5)
             elif _type in [FTF.V_DATETIME]:
@@ -231,6 +262,20 @@ class Table:
                 df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
                 df[col] = df[col].replace(epoch, None)
                 df[col] = df[col].replace(0, None)
+            elif _type in [FTF.V_FUXUAN]:
+                # 飞书复选框严格要求 Python bool,否则 1254065 CheckboxFieldConvFail
+                def to_bool(v):
+                    if v is None:
+                        return False
+                    if isinstance(v, float) and np.isnan(v):
+                        return False
+                    if isinstance(v, str):
+                        return v.strip().lower() in ('1', 'true', 'yes', 'y', 't')
+                    try:
+                        return bool(int(v))
+                    except (TypeError, ValueError):
+                        return bool(v)
+                df[col] = df[col].apply(to_bool)
             elif _type in [FTF.V_MSELECT]:
                 def ensure_list(obj):
                     if obj is None:
@@ -296,6 +341,8 @@ class Table:
             response: BatchCreateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_create(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+                if response.code == 1254130:
+                    self._dump_oversized_cells(df, op='batch_create')
             return len(df)
         return sum([inner(x) for x in batch_split(df, 1000)])
 
@@ -317,6 +364,9 @@ class Table:
             response: BatchUpdateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_update(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_update failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+                if response.code == 1254130:
+                    self._dump_oversized_cells(df, op='batch_update')
+                return 0
             return len(response.data.records)
         return sum([inner(x) for x in batch_split(df, 1000)])
 
