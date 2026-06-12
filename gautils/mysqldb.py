@@ -30,7 +30,8 @@ class And:
         return self
     def vin(self, col, values):
         if values is not None and len(values) > 0:
-            values = np.unique(values)
+            # tolist() 把 np.int64 等 numpy 标量转回 Python 原生类型，mysql-connector 无法转换 numpy 类型
+            values = np.unique(values).tolist()
             placeholders = ','.join(['%s'] * len(values))
             cond = '`{0}` IN({1})'.format(col, placeholders)
             return self.cond(cond, *values)
