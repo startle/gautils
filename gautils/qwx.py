@@ -1,9 +1,7 @@
 class WXWorkRobot:
-    def __init__(self, url='conf.yml'):
+    def __init__(self, url='conf.yml', verify=True):
         self._url = url
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        urllib3.disable_warnings()
+        self._verify = verify
     def send_md(self, msg, mentioned_list=None):
         import requests
         j = {
@@ -14,15 +12,8 @@ class WXWorkRobot:
         }
         import json
         data = json.dumps(j)
-        # data = '''
-        # {
-        #         "msgtype": "markdown",
-        #         "markdown": {
-        #             "content": "%s"
-        #         }
-        # }''' % msg.encode('utf-8').decode('unicode_escape')
         headers = {'user-agent': 'my-app/0.0.1'}
-        requests.post(self._url, headers=headers, data=data, verify=False)
+        requests.post(self._url, headers=headers, data=data, verify=self._verify)
 def send_qwx_md_msg(url, msg, mentioned_list=None):
     qwx = WXWorkRobot(url)
     qwx.send_md(msg, mentioned_list=mentioned_list)

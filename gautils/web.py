@@ -44,27 +44,31 @@ def default_phone_headers():
         "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Mobile Safari/537.36",
     }
 def retry_run(f, *params, retry_times=3, sleep_s=5, **kw):
+    last_err = None
     for i in range(retry_times):
         try:
-            result = f(*params, **kw)
-            return result
+            return f(*params, **kw)
         except KeyboardInterrupt:
             sys.exit(0)
         except Exception as e:
-            logging.error(f"failed on {i} times...", exc_info=e)
-            time.sleep(sleep_s * i)
-    return None
+            last_err = e
+            logging.error("retry %d/%d failed", i + 1, retry_times, exc_info=e)
+            if i < retry_times - 1:
+                time.sleep(sleep_s * (i + 1))
+    raise RuntimeError(f"retry_run exhausted {retry_times} retries") from last_err
 def retry_run2(f, retry_times=3, sleep_s=5) -> requests.Response:
+    last_err = None
     for i in range(retry_times):
         try:
-            result = f()
-            return result
+            return f()
         except KeyboardInterrupt:
             sys.exit(0)
         except Exception as e:
-            logging.error(f"failed on {i} times...", exc_info=e)
-            time.sleep(sleep_s * i)
-    return None
+            last_err = e
+            logging.error("retry %d/%d failed", i + 1, retry_times, exc_info=e)
+            if i < retry_times - 1:
+                time.sleep(sleep_s * (i + 1))
+    raise RuntimeError(f"retry_run2 exhausted {retry_times} retries") from last_err
 def get_host(url):
     import re
     match = re.search(r'^(?:http[s]?://)?([^:/?#]+)', url)
@@ -95,7 +99,7 @@ class CookieManager:
         self.cookies.update(new_cookies)
         self.save_cookies()
 class Web:
-    def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None, verify=False, build_proxies_f=None):
+    def __init__(self, cookies_filepath: str = 'cookies.yml', headers=None, verify=True, build_proxies_f=None):
         self.cookie_manager = CookieManager(cookies_filepath)
         self.headers = headers
         self.verify = verify
@@ -115,8 +119,6 @@ class Web:
         cookies = self.cookie_manager.cookies.get(host, {})
         session.cookies.update(cookies)
         response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
-        if response is None:
-            return None
         # 从 session 提取服务端返回的 cookies 并持久化
         updated = requests.utils.dict_from_cookiejar(session.cookies)
         if updated:

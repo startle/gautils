@@ -20,7 +20,7 @@ class TestWXWorkRobot(unittest.TestCase):
         self.assertEqual(call_args[0][0], 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test')
         self.assertIn('headers', call_args[1])
         self.assertIn('data', call_args[1])
-        self.assertEqual(call_args[1]['verify'], False)
+        self.assertEqual(call_args[1]['verify'], True)
 
     @patch('requests.post')
     def test_send_md_with_mentioned_list(self, mock_post):
