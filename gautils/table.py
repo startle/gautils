@@ -37,8 +37,15 @@ class KVTable:
         print('---------------')
         # print('tables', self._table, self._name)
         # print('keys', len(keys), keys)
-        df_existed: pd.DataFrame = self._db.query(f'SELECT * FROM {self._table} WHERE `name`=:name AND `keys` IN :keys', name=self._name, keys=keys)
-        # print('existed', len(df_existed), df_existed[key_col].to_list())
+        # SQLAlchemy text() 不支持 IN :keys 直接传 list，需用 bindparam(expanding=True)
+        # 改用手动拼接占位符，兼容 DbNative 和 DbAlchemy
+        placeholders = ','.join([f':k{i}' for i in range(len(keys))])
+        params = {f'k{i}': v for i, v in enumerate(keys)}
+        params['name'] = self._name
+        df_existed: pd.DataFrame = self._db.query(
+            f'SELECT * FROM {self._table} WHERE `name`=:name AND `keys` IN ({placeholders})',
+            **params
+        )
         print(f'kvtables check: table[{self._table}], name[{self._name}] exist:{len(keys)}/{len(df_existed)}')
         df_existed = sdf[sdf[key_col].isin(df_existed[key_col].unique())]
 
