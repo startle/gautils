@@ -25,7 +25,7 @@ class And:
     def cond(self, cond, *params):
         self.__conds.append(cond)
         if len(params) > 0:
-            self.__params += list(*params)
+            self.__params += list(params)
         return self
     def vin(self, col, values):
         if values is not None and len(values) > 0:
@@ -61,14 +61,14 @@ class MysqlQuery:
         self.__where = And()
         self.__db = db
     def and_cond(self, cond, *params):
-        self.__where.cond(cond, params)
+        self.__where.cond(cond, *params)
         return self
     def and_in(self, col, values):
         ''' values must be a list or array '''
         self.__where.vin(col, values)
         return self
     def and_eq(self, col, value):
-        self.__where.eq(col, [value])
+        self.__where.eq(col, value)
         return self
     def query(self) -> pd.DataFrame:
         if self.__cols is None:
