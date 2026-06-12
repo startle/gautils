@@ -298,17 +298,18 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cha
     def build_cache_path(sql: str, *params):
         sql = sql + '_' + '_'.join([str(x) for x in params])
         sign = '%d_%s' % (len(sql) , hashlib.md5(sql.encode(encoding='utf8')).hexdigest())
-        return cache_dir + sign
+        return os.path.join(cache_dir, sign)
 
-    def file_cache_query(_, sql: str, *params, **kws):
-        cache_path = build_cache_path(sql, params)
-        if is_use_file_cache and os.path.isfile(cache_path):
-            return pd.read_json(cache_path)
-        else:
-            df = db.query(sql, *params, **kws)
-            if is_use_file_cache and (len(df) > 0):
+    if is_use_file_cache:
+        os.makedirs(cache_dir, exist_ok=True)
+        _orig_query = db.query  # 保存原 bound method，避免内部调用触发自身→无限递归
+        def file_cache_query(sql: str, *params, **kws):
+            cache_path = build_cache_path(sql, *params)
+            if os.path.isfile(cache_path):
+                return pd.read_json(cache_path)
+            df = _orig_query(sql, *params, **kws)
+            if len(df) > 0:
                 df.to_json(cache_path)
             return df
-    if is_use_file_cache:
         db.query = file_cache_query
     return db
