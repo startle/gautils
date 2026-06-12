@@ -30,12 +30,9 @@ class And:
     def vin(self, col, values):
         if values is not None and len(values) > 0:
             values = np.unique(values)
-            if type(values[0]) in [int]:
-                vstrs = values
-            else:
-                vstrs = ['\'' + str(x) + '\'' for x in values]
-            cond = '`{0}`IN({1})'.format(col, ','.join(vstrs))
-            return self.cond(cond)
+            placeholders = ','.join(['%s'] * len(values))
+            cond = '`{0}` IN({1})'.format(col, placeholders)
+            return self.cond(cond, *values)
         else:
             raise ValueError('values is empty.')
     def between(self, col, fr, to):
@@ -106,31 +103,33 @@ class MysqlDb:
     def close(self): pass
 
 
+# 整型用 pandas nullable Int64（兼容 NULL）；字符串用 object（避免 U 定长截断）
+_INT = pd.Int64Dtype()
 _db_field_type2dtype_dict = {
-    FieldType.TINY: 'int64',
-    FieldType.SHORT: 'int64',
-    FieldType.LONG: 'int64',
+    FieldType.TINY: _INT,
+    FieldType.SHORT: _INT,
+    FieldType.LONG: _INT,
     FieldType.DECIMAL: 'float64',
     FieldType.FLOAT: 'float64',
     FieldType.DOUBLE: 'float64',
     # FieldType.NULL:
-    FieldType.LONGLONG: 'int64',
-    FieldType.INT24: 'int64',
-    FieldType.DATE: 'U13',
-    FieldType.TIME: 'U13',
+    FieldType.LONGLONG: _INT,
+    FieldType.INT24: _INT,
+    FieldType.DATE: 'object',
+    FieldType.TIME: 'object',
     # FieldType.TIMESTAMP: 'datetime64',
     FieldType.DATETIME: 'datetime64[ns]',
-    FieldType.VARCHAR: 'U13',
+    FieldType.VARCHAR: 'object',
     # FieldType.BIT: ,
     FieldType.NEWDECIMAL: 'float64',
-    FieldType.ENUM: 'U13',
+    FieldType.ENUM: 'object',
     # FieldType.SET: ,
     # FieldType.TINY_BLOB: ,
     # FieldType.MEDIUM_BLOB: ,
     # FieldType.LONG_BLOB: ,
-    FieldType.BLOB: 'U13',
-    FieldType.VAR_STRING: 'U13',
-    FieldType.STRING: 'U13',
+    FieldType.BLOB: 'object',
+    FieldType.VAR_STRING: 'object',
+    FieldType.STRING: 'object',
     # FieldType.GEOMETRY: ,
 }
 def _db_field_type2dtype(db_field_type: int):
