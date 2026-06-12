@@ -75,6 +75,25 @@ db:
         self.assertTrue(conf.get_bool(['db', 'ssl']))
         self.assertFalse(conf.get_bool(['db', 'debug']))
 
+    def test_get_bool_string_falsy(self):
+        self._create_conf_file('''
+flags:
+  a: "false"
+  b: "False"
+  c: "0"
+  d: "no"
+  e: "off"
+  f: ""
+  g: "true"
+  h: "1"
+  i: "yes"
+''')
+        conf = Conf(self.conf_path)
+        for key in ('a', 'b', 'c', 'd', 'e', 'f'):
+            self.assertFalse(conf.get_bool(['flags', key]), f'flags.{key} should be False')
+        for key in ('g', 'h', 'i'):
+            self.assertTrue(conf.get_bool(['flags', key]), f'flags.{key} should be True')
+
     def test_get_dict(self):
         self._create_conf_file('''
 db:
