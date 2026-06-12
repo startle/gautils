@@ -21,7 +21,12 @@ class CScheduler:
     def is_active(self, line: str) -> bool:
         current_time = datetime.now()
         line_data = self.lines[line]
-        return line_data['start_time'] <= current_time < line_data['end_time']
+        start, end = line_data['start_time'], line_data['end_time']
+        if start and start > current_time:
+            return False
+        if end and current_time >= end:
+            return False
+        return True
     async def _run_line(self, line: str):
         data = self.lines[line]
 
@@ -57,9 +62,9 @@ if __name__ == '__main__':
     time3 = time1 + timedelta(seconds=10)
 
     scheduler = CScheduler()
-    scheduler.register_line('line1', 1.0, time1, time3)
-    scheduler.register_tasks('line1', [task1], is_loop=True)
-    scheduler.register_line('line2', 2.0, time2, time3)
-    scheduler.register_tasks('line2', [task2], is_loop=True)
+    scheduler.register_line('line1', 1.0, is_loop=True, start_time=time1, end_time=time3)
+    scheduler.register_tasks('line1', [task1])
+    scheduler.register_line('line2', 2.0, is_loop=True, start_time=time2, end_time=time3)
+    scheduler.register_tasks('line2', [task2])
 
     scheduler.run()
