@@ -193,11 +193,12 @@ class MysqlDbImpl(MysqlDb):
     def execute(self, sql, *params, **kws):
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cnt = cursor.execute(sql, params)
+            cursor.execute(sql, params)
             conn.commit()
+            rowcount = cursor.rowcount
             cursor.close()
             self._after_execute()
-            return cnt
+            return rowcount
     def query(self, sql, *params, **kws):
         def read_row(row):
             def trans(x):
