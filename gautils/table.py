@@ -1,4 +1,4 @@
-import sys
+import logging
 import pandas as pd
 
 from .mysqldb import MysqlDb
@@ -34,9 +34,6 @@ class KVTable:
         sdf[name_col] = self._name
 
         keys = sdf[key_col].unique().tolist()
-        print('---------------')
-        # print('tables', self._table, self._name)
-        # print('keys', len(keys), keys)
         # SQLAlchemy text() 不支持 IN :keys 直接传 list，需用 bindparam(expanding=True)
         # 改用手动拼接占位符，兼容 DbNative 和 DbAlchemy
         placeholders = ','.join([f':k{i}' for i in range(len(keys))])
@@ -46,7 +43,7 @@ class KVTable:
             f'SELECT * FROM {self._table} WHERE `name`=:name AND `keys` IN ({placeholders})',
             **params
         )
-        print(f'kvtables check: table[{self._table}], name[{self._name}] exist:{len(keys)}/{len(df_existed)}')
+        logging.debug(f'kvtables check: table[{self._table}], name[{self._name}] exist:{len(keys)}/{len(df_existed)}')
 
         if not df_existed.empty:
             existed_keys = df_existed[key_col].unique()

@@ -38,6 +38,12 @@ from gautils.web import (
 from gautils.coroutine import (
     CScheduler
 )
-from gautils.feishu import (
-    send_fs_robot_msg,
-)
+
+
+def __getattr__(name):
+    """延迟加载飞书模块，避免未安装 lark_oapi 时整个包不可用"""
+    if name == 'send_fs_robot_msg':
+        from gautils.feishu import send_fs_robot_msg
+        globals()['send_fs_robot_msg'] = send_fs_robot_msg
+        return send_fs_robot_msg
+    raise AttributeError(f"module 'gautils' has no attribute {name!r}")

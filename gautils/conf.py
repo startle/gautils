@@ -2,7 +2,7 @@ import yaml
 
 class Conf:
     def __init__(self, conf_path):
-        with open(conf_path, 'r') as f:
+        with open(conf_path, 'r', encoding='utf-8') as f:
             yml = yaml.safe_load(f.read())
             self.datas = yml
     def get(self, path, default=None, ignore_none=False):
@@ -24,7 +24,13 @@ class Conf:
         return d
     def get_int(self, path, default=None, ignore_none=False): return int(self.get(path, default=default, ignore_none=ignore_none))
     def get_float(self, path, default=None, ignore_none=False): return float(self.get(path, default=default, ignore_none=ignore_none))
-    def get_bool(self, path, default=None, ignore_none=False): return bool(self.get(path, default=default, ignore_none=ignore_none))
+    def get_bool(self, path, default=None, ignore_none=False):
+        val = self.get(path, default=default, ignore_none=ignore_none)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() not in ('false', '0', 'no', 'off', '')
+        return bool(val)
     def get_dict(self, path, default=None, ignore_none=False):
         data = self._get(path, default=default, ignore_none=ignore_none)
         if isinstance(data, dict):

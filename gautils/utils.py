@@ -2,11 +2,7 @@ import logging
 import datetime
 import os
 import math
-import sys
 import pandas as pd
-import os
-
-DEBUG_OUT_DIR = 'temp/debug_out'
 def convert_url_to_windows_filename(url: str):
     invalid_chars = '<>:"/\\|?*'
     for char in invalid_chars:
@@ -63,14 +59,14 @@ def binsearch(l: list, e, key_f=None):
     bi, ei, mi = 0, n - 1, 0
     if e > key_f(l[ei]) or e < key_f(l[bi]):
         return -1
-    if e == l[ei]:
+    if e == key_f(l[ei]):
         return ei
-    if e == l[bi]:
+    if e == key_f(l[bi]):
         return bi
     while 1:
         mi = math.floor((bi + ei) / 2)
         if mi == bi or mi == ei:
-            return mi
+            return -1
         if e == key_f(l[mi]):
             return mi
         elif e > key_f(l[mi]):
@@ -160,7 +156,7 @@ def watch_process(exclude_ks=None, exclude_arg_indexes=None, kw_formatter=None, 
             if k in exclude_ks:
                 return '%s:_' % k
             elif k in kw_formatter:
-                return '%s:%s' % (k, kw_formatter(k))
+                return '%s:%s' % (k, kw_formatter[k](v))
             else:
                 return '%s:%s' % (k, default_str_format(v))
 
