@@ -1,4 +1,5 @@
 import json
+import time
 import warnings
 from typing import Optional
 
@@ -35,10 +36,11 @@ class FeishuClient:
             .build()
         self._app_info = None
         self._tenant_access_token = None
+        self._token_expire_at = 0  # token 过期时间戳（秒）
 
     def get_tenant_access_token(self) -> Optional[str]:
-        """获取 tenant_access_token"""
-        if self._tenant_access_token:
+        """获取 tenant_access_token，过期自动刷新"""
+        if self._tenant_access_token and time.time() < self._token_expire_at:
             return self._tenant_access_token
 
         request: InternalTenantAccessTokenRequest = InternalTenantAccessTokenRequest.builder() \
@@ -58,7 +60,10 @@ class FeishuClient:
         try:
             content = json.loads(response.raw.content)
             token = content.get('tenant_access_token')
+            expire = content.get('expire', 0)
             self._tenant_access_token = token
+            # 提前 5 分钟过期，避免临界态请求失败
+            self._token_expire_at = time.time() + expire - 300
             return token
         except (json.JSONDecodeError, AttributeError):
             lark.logger.error("Failed to parse tenant_access_token response")
