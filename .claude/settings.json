@@ -1,0 +1,58 @@
+{
+  "effortLevel": "medium",
+  "enabledPlugins": {
+    "brain@bt-cc-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "bt-cc-marketplace": {
+      "source": {
+        "source": "git",
+        "url": "git@gitlab.bt:ywzc/ai/bt-cc-marketplace.git"
+      }
+    }
+  },
+  "includeCoAuthoredBy": false,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash tools/scripts/quick_test.sh 2>&1 | head -5",
+            "timeout": 60000
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash(*)",
+      "Edit",
+      "Write",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch",
+      "Agent",
+      "PowerShell(Get-Content *)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Select-String *)",
+      "PowerShell(Select-Object *)",
+      "PowerShell(Measure-Object *)",
+      "PowerShell(Test-Path *)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(rm -rf *)",
+      "Bash(git push *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(git checkout -- *)"
+    ]
+  }
+}

@@ -10,3 +10,4 @@ btwatch.py
 temp/
 
 *.bat
+.claude/settings.local.json
