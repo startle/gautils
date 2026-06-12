@@ -12,6 +12,7 @@ DEFAULT_TIMEOUT = (5, 30)
 
 ##################  http  #######################
 def request_regular_fetch(pattern, url, params=None, headers=None):
+    text = None
     try:
         text = request(url, params=params, headers=headers)
 
@@ -21,8 +22,8 @@ def request_regular_fetch(pattern, url, params=None, headers=None):
         else:
             raise ValueError("request_regular_fetch failed. url[%s] pattern[%s]" % (url, pattern))
     except Exception as e:
-        logging.getLogger("dbupdate").error("url fetch failed.url[%s] text:\n%s" , url, text[:50], exc_info=e)
-        raise e
+        logging.getLogger("dbupdate").error("url fetch failed.url[%s] text:\n%s" , url, text[:50] if text else '<unavailable>', exc_info=e)
+        raise
 def request(url, params=None, headers=None, _type="get") -> str:
     if _type == "get":
         return Web().get(url, params=params, headers=headers)
