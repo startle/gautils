@@ -66,8 +66,10 @@ class TestRetryRun(unittest.TestCase):
     @patch('gautils.web.logging.error')
     def test_all_retries_failed(self, mock_log_error):
         mock_func = MagicMock(side_effect=Exception('error'))
-        result = retry_run(mock_func, retry_times=3, sleep_s=0.01)
-        self.assertIsNone(result)
+        with self.assertRaises(RuntimeError) as ctx:
+            retry_run(mock_func, retry_times=3, sleep_s=0.01)
+        self.assertIn('exhausted 3 retries', str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, Exception)
         self.assertEqual(mock_func.call_count, 3)
         self.assertEqual(mock_log_error.call_count, 3)
 
