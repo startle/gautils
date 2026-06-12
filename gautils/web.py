@@ -111,15 +111,16 @@ class Web:
     def request(self, url, request_f, retry_times=3, encoding=None):
         session = requests.Session()
         host = get_host(url)
-        if host in self.cookie_manager.cookies:
-            cookies = self.cookie_manager.cookies.pop(host)
-        else:
-            cookies = {}
+        cookies = self.cookie_manager.cookies.get(host, {})
         session.cookies.update(cookies)
         response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
         if response is None:
             return None
-        self.cookie_manager.cookies[host] = cookies
+        # 从 session 提取服务端返回的 cookies 并持久化
+        updated = requests.utils.dict_from_cookiejar(session.cookies)
+        if updated:
+            self.cookie_manager.cookies[host] = updated
+            self.cookie_manager.save_cookies()
         response.encoding = response.apparent_encoding if encoding is None else encoding
         try :
             return response.text
