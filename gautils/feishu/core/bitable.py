@@ -118,7 +118,7 @@ class Table:
             DeprecationWarning,
             stacklevel=2
         )
-        return self.search_records(field_names=field_names)
+        return self.search_records(field_names=field_names, filter=filter)
 
     def search_records(self, field_names: list[str] = None, sorts: list[Sort] = None, filter: FilterInfo = None) -> Optional[pd.DataFrame]:
         ''' filter = FilterInfo.builder().conjunction("and").conditions([Condition.builder()
@@ -146,11 +146,7 @@ class Table:
 
             def read_text(v):
                 if isinstance(v, list):
-                    v0 = v[0]
-                    if v0['type'] in {'text', 'url'}:
-                        return v0['text']
-                    else:
-                        return v0['text']
+                    return v[0]['text']
                 return v
 
             def read_datetime(v):
@@ -244,7 +240,7 @@ class Table:
             if col not in df.columns:
                 continue
             if _type in [FTF.V_TEXT, FTF.V_SSELECT]:
-                df[col] = df[col].astype(str).fillna('').replace('<NA>', '')
+                df[col] = df[col].fillna('').astype(str).replace('<NA>', '')
                 over_mask = df[col].str.len() > self._TEXT_CELL_MAX
                 if over_mask.any():
                     max_len = int(df.loc[over_mask, col].str.len().max())
@@ -260,7 +256,6 @@ class Table:
                 df[col] = df[col].fillna(epoch)
                 df[col] = df[col].dt.tz_convert('Asia/Shanghai') if df[col].dt.tz is not None else df[col].dt.tz_localize('Asia/Shanghai')
                 df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
-                df[col] = df[col].replace(epoch, None)
                 df[col] = df[col].replace(0, None)
             elif _type in [FTF.V_FUXUAN]:
                 # 飞书复选框严格要求 Python bool,否则 1254065 CheckboxFieldConvFail
@@ -299,12 +294,12 @@ class Table:
         df = self.clean_df(df)
         df = self.format_type_df_before_CU(df)
         if self.primary_fields is None or len(self.primary_fields) == 0:
-            self._insert_records(df)
+            return self._insert_records(df)
         else:
             df = df.drop_duplicates(subset=self.primary_fields, keep='first')
 
             def build_primary_filter() -> FilterInfo:
-                FilterInfo().builder().conjunction('or').conditions([
+                return FilterInfo().builder().conjunction('or').conditions([
                     FilterInfo().builder().conjunction('and').conditions([
                         Condition().builder().field_name(k).operator("is").value(v).build()
                         for k, v in row.items()]).build()
@@ -343,6 +338,7 @@ class Table:
                 lark.logger.error(f"client.bitable.v1.app_table_record.batch_create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
                 if response.code == 1254130:
                     self._dump_oversized_cells(df, op='batch_create')
+                return 0
             return len(df)
         return sum([inner(x) for x in batch_split(df, 1000)])
 
@@ -492,7 +488,7 @@ class BiTable:
             return None
         return Table(self, table_row)
 
-    def query_table(self, table_id=None, table_name=None) -> str:
+    def query_table(self, table_id=None, table_name=None) -> Optional[pd.Series]:
         df_table = self.query_tables()
         if df_table is None or len(df_table) == 0:
             return None
@@ -505,17 +501,17 @@ class BiTable:
         return None
 
     def query_tables(self) -> pd.DataFrame:
-        def inner():
-            ''' fixme: 要处理has_more '''
+        def inner(page_token=None):
             request: ListAppTableRequest = ListAppTableRequest.builder() \
                 .app_token(self.app_token) \
+                .page_token(page_token if page_token is not None else '') \
                 .page_size(100).build()
             response: ListAppTableResponse = self.client.bitable.v1.app_table.list(request)
             if not response.success():
-                lark.logger.error(f"client.bitable.v1.app_table.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-                return
-            j = response.data
-            return pd.DataFrame(pd.Series({_FS.BITABLE.TABLE.NAME: x.name, _FS.BITABLE.TABLE.ID: x.table_id, _FS.BITABLE.TABLE.REVISION: x.revision}) for x in j.items)
+                raise ValueError(f"client.bitable.v1.app_table.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
+            data = response.data
+            df = pd.DataFrame(pd.Series({_FS.BITABLE.TABLE.NAME: x.name, _FS.BITABLE.TABLE.ID: x.table_id, _FS.BITABLE.TABLE.REVISION: x.revision}) for x in data.items)
+            return data.has_more, data.page_token, df
         if self._tables is None:
-            self._tables = inner()
+            self._tables = _query_has_more_list_by_page_token(inner)
         return self._tables
