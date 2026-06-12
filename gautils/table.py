@@ -35,7 +35,7 @@ class KVTable:
 
         keys = sdf[key_col].unique().tolist()
         # SQLAlchemy text() 不支持 IN :keys 直接传 list，需用 bindparam(expanding=True)
-        # 改用手动拼接占位符，兼容 DbNative 和 DbAlchemy
+        # 改用手动拼接 :kN 命名占位符。注意：仅 DbAlchemy 支持命名参数，MysqlDbImpl.query 忽略 **kws，KVTable 不可配 MysqlDbImpl 使用
         placeholders = ','.join([f':k{i}' for i in range(len(keys))])
         params = {f'k{i}': v for i, v in enumerate(keys)}
         params['name'] = self._name
