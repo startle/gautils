@@ -47,14 +47,15 @@ class KVTable:
             **params
         )
         print(f'kvtables check: table[{self._table}], name[{self._name}] exist:{len(keys)}/{len(df_existed)}')
-        df_existed = sdf[sdf[key_col].isin(df_existed[key_col].unique())]
 
         if not df_existed.empty:
             existed_keys = df_existed[key_col].unique()
             df_insert = sdf[~sdf[key_col].isin(existed_keys)]
             df_update = sdf[sdf[key_col].isin(existed_keys)]
             if len(df_update) > 0:
-                df_update = df_update[df_update[datas_col] != df_existed[datas_col]]
+                # 按 key_col 对齐 DB 历史数据，检测真正的变更
+                db_datas = df_existed.set_index(key_col)[datas_col]
+                df_update = df_update[df_update[key_col].map(db_datas) != df_update[datas_col]]
         else:
             df_insert = sdf
             df_update = None

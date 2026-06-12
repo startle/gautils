@@ -96,6 +96,58 @@ class TestKVTable(unittest.TestCase):
 
         self.mock_db.update.assert_called_once()
 
+    def test_insert_detects_real_change(self):
+        """变更检测：DB 有旧数据，新数据不同时应返回 df_update"""
+        # key_encode 在 insert 内部先 astype(str) 再算 MD5，测试要与之对齐
+        existing_key = KEY_ENCODE_MD5(pd.Series({'key1': 'a', 'key2': '1'}))
+        old_datas = pd.Series({'key1': 'a', 'key2': '1', 'value': 'old_x'}).to_json()
+
+        self.mock_db.query.return_value = pd.DataFrame({
+            'keys': [existing_key],
+            'name': ['test_name'],
+            'datas': [old_datas],
+        })
+        self.mock_db.update.return_value = 1
+
+        df = pd.DataFrame({
+            'key1': ['a'],
+            'key2': [1],
+            'value': ['new_x'],
+        })
+
+        df_insert, df_update = self.kv_table.insert(df)
+
+        self.assertIsNotNone(df_insert)
+        self.assertTrue(df_insert.empty, "key 已存在，不应有 insert")
+        self.assertIsNotNone(df_update)
+        self.assertEqual(len(df_update), 1, "数据变更，应检测到 1 行 update")
+
+    def test_insert_no_change_skips_update(self):
+        """变更检测：DB 数据与新数据相同时不应返回 df_update"""
+        existing_key = KEY_ENCODE_MD5(pd.Series({'key1': 'a', 'key2': '1'}))
+        same_datas = pd.Series({'key1': 'a', 'key2': '1', 'value': 'same_x'}).to_json()
+
+        self.mock_db.query.return_value = pd.DataFrame({
+            'keys': [existing_key],
+            'name': ['test_name'],
+            'datas': [same_datas],
+        })
+        self.mock_db.update.return_value = 1
+
+        df = pd.DataFrame({
+            'key1': ['a'],
+            'key2': [1],
+            'value': ['same_x'],
+        })
+
+        df_insert, df_update = self.kv_table.insert(df)
+
+        self.assertIsNotNone(df_insert)
+        self.assertTrue(df_insert.empty)
+        # 数据无变化，df_update 应为空
+        if df_update is not None:
+            self.assertTrue(df_update.empty, "数据未变更，df_update 应为空")
+
 
 if __name__ == '__main__':
     unittest.main()
