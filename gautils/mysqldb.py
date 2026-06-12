@@ -1,6 +1,7 @@
 import os
 import hashlib
 import logging
+import time
 from enum import Enum
 from urllib.parse import quote_plus
 
@@ -284,7 +285,7 @@ class DbAlchemy(MysqlDb):
                 conn.commit()
                 return result.rowcount
 
-def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, charset='utf8', conn_type=ConnType.COMMON, **kws) -> MysqlDb:
+def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cache_ttl=None, charset='utf8', conn_type=ConnType.COMMON, **kws) -> MysqlDb:
     kws.update({'charset': charset})
     if conn_type == ConnType.COMMON:
         db = MysqlDbImpl(h, p, u, pwd, db, **kws)
@@ -295,21 +296,25 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cha
     if cache_dir is None:
         cache_dir = './temp/cache'
 
-    def build_cache_path(sql: str, *params):
-        sql = sql + '_' + '_'.join([str(x) for x in params])
-        sign = '%d_%s' % (len(sql) , hashlib.md5(sql.encode(encoding='utf8')).hexdigest())
+    def build_cache_path(sql: str, *params, **kws):
+        key = sql + '_' + '_'.join([str(x) for x in params])
+        if kws:
+            # kws 按 key 排序纳入签名，避免 DbAlchemy 同 SQL 不同参数误命中
+            key += '_' + '_'.join([f'{k}={v}' for k, v in sorted(kws.items())])
+        sign = '%d_%s' % (len(key), hashlib.md5(key.encode(encoding='utf8')).hexdigest())
         return os.path.join(cache_dir, sign)
 
     if is_use_file_cache:
         os.makedirs(cache_dir, exist_ok=True)
         _orig_query = db.query  # 保存原 bound method，避免内部调用触发自身→无限递归
         def file_cache_query(sql: str, *params, **kws):
-            cache_path = build_cache_path(sql, *params)
-            if os.path.isfile(cache_path):
-                return pd.read_json(cache_path)
+            cache_path = build_cache_path(sql, *params, **kws)
+            # 命中: 文件存在 且 (无 TTL 或 未过期); 过期则重查覆盖。pickle 保 dtype 往返不失真
+            if os.path.isfile(cache_path) and (cache_ttl is None or (time.time() - os.path.getmtime(cache_path)) < cache_ttl):
+                return pd.read_pickle(cache_path)
             df = _orig_query(sql, *params, **kws)
             if len(df) > 0:
-                df.to_json(cache_path)
+                df.to_pickle(cache_path)
             return df
         db.query = file_cache_query
     return db
