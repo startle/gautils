@@ -104,21 +104,23 @@ class Web:
         self.headers = headers
         self.verify = verify
         self.build_proxies_f = (lambda : None) if build_proxies_f is None else build_proxies_f
-    def get(self, url, params=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT):
+    def get(self, url, params=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False):
         def request(session: requests.Session, url: str):
             proxies = self.build_proxies_f()
             return session.get(url, headers=self.headers, params=params, verify=self.verify, proxies=proxies, timeout=timeout)
-        return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
-    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT):
+        return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding, raise_for_status=raise_for_status)
+    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False):
         def request(session: requests.Session, url: str):
             return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f(), timeout=timeout)
-        return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding)
-    def request(self, url, request_f, retry_times=3, encoding=None):
+        return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding, raise_for_status=raise_for_status)
+    def request(self, url, request_f, retry_times=3, encoding=None, raise_for_status=False):
         session = requests.Session()
         host = get_host(url)
         cookies = self.cookie_manager.cookies.get(host, {})
         session.cookies.update(cookies)
         response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
+        if raise_for_status:
+            response.raise_for_status()
         # 从 session 提取服务端返回的 cookies 并持久化
         updated = requests.utils.dict_from_cookiejar(session.cookies)
         if updated:

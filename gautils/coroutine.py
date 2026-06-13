@@ -38,7 +38,8 @@ class CScheduler:
                     logging.error(f"task error", exc_info=e)
                 await asyncio.sleep(data['interval'])
         if data['is_loop']:
-            await asyncio.sleep(max(0, (data['start_time'] - datetime.now()).total_seconds()))
+            if data['start_time']:
+                await asyncio.sleep(max(0, (data['start_time'] - datetime.now()).total_seconds()))
             while self.is_active(line):
                 await run_tasks()
         else:

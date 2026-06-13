@@ -1,8 +1,8 @@
-from distutils.core import setup
+from setuptools import find_packages, setup
 
 setup(
   name = 'gautils',
-  packages = ['gautils'],
+  packages = find_packages(),
   version = '1.1.2',
   license='MIT',
   description = 'gau\'s utils',
@@ -12,9 +12,13 @@ setup(
   download_url = 'https://github.com/startle/gautils/archive/refs/heads/main.zip',
   keywords = ['gau', 'utils'],
   install_requires=[
-    'pandas>=1.3.2',
+    'numpy>=2.2.6',
+    'pandas>=2.2.3',
     'mysql-connector==2.2.9',
-    'PyYAML>=5.4.1',
+    'PyYAML>=6.0.2',
+    'requests>=2.31.0',
+    'lark-oapi>=1.4.24',
+    'SQLAlchemy>=2.0.43',
   ],
   classifiers=[
     'Development Status :: 3 - Alpha',      # Chose either "3 - Alpha", "4 - Beta" or "5 - Production/Stable" as the current state of your package

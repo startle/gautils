@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 import yaml
+import requests
 
 from gautils.web import (
     get_host,
@@ -131,6 +132,7 @@ class TestWeb(unittest.TestCase):
 
         self.assertEqual(result, 'response content')
         mock_retry.assert_called_once()
+        mock_response.raise_for_status.assert_not_called()
 
     @patch('gautils.web.requests.Session')
     @patch('gautils.web.retry_run2')
@@ -148,6 +150,60 @@ class TestWeb(unittest.TestCase):
 
         self.assertEqual(result, 'post response')
         mock_retry.assert_called_once()
+
+    @patch('gautils.web.requests.Session')
+    @patch('gautils.web.retry_run2')
+    def test_get_keeps_legacy_http_error_body_by_default(self, mock_retry, mock_session_class):
+        mock_session = MagicMock()
+        mock_session_class.return_value = mock_session
+
+        mock_response = MagicMock()
+        mock_response.text = 'not found'
+        mock_response.apparent_encoding = 'utf-8'
+        mock_response.raise_for_status.side_effect = requests.HTTPError('404')
+        mock_retry.return_value = mock_response
+
+        web = Web(cookies_filepath=self.temp_cookie_file)
+        result = web.get('http://example.com/missing')
+
+        self.assertEqual(result, 'not found')
+        mock_response.raise_for_status.assert_not_called()
+
+    @patch('gautils.web.requests.Session')
+    @patch('gautils.web.retry_run2')
+    def test_get_can_raise_for_http_error(self, mock_retry, mock_session_class):
+        mock_session = MagicMock()
+        mock_session_class.return_value = mock_session
+
+        mock_response = MagicMock()
+        mock_response.text = 'server error'
+        mock_response.apparent_encoding = 'utf-8'
+        mock_response.raise_for_status.side_effect = requests.HTTPError('500')
+        mock_retry.return_value = mock_response
+
+        web = Web(cookies_filepath=self.temp_cookie_file)
+        with self.assertRaises(requests.HTTPError):
+            web.get('http://example.com/error', raise_for_status=True)
+
+        mock_response.raise_for_status.assert_called_once()
+
+    @patch('gautils.web.requests.Session')
+    @patch('gautils.web.retry_run2')
+    def test_post_can_raise_for_http_error(self, mock_retry, mock_session_class):
+        mock_session = MagicMock()
+        mock_session_class.return_value = mock_session
+
+        mock_response = MagicMock()
+        mock_response.text = 'server error'
+        mock_response.apparent_encoding = 'utf-8'
+        mock_response.raise_for_status.side_effect = requests.HTTPError('500')
+        mock_retry.return_value = mock_response
+
+        web = Web(cookies_filepath=self.temp_cookie_file)
+        with self.assertRaises(requests.HTTPError):
+            web.post('http://example.com/error', data={'key': 'value'}, raise_for_status=True)
+
+        mock_response.raise_for_status.assert_called_once()
 
     def test_parse_url(self):
         web = Web(cookies_filepath=self.temp_cookie_file)

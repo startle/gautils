@@ -78,6 +78,12 @@ class TestCScheduler(unittest.TestCase):
 
         self.assertFalse(scheduler.lines['test_line']['is_loop'])
 
+    def test_is_active_without_time_bounds(self):
+        scheduler = CScheduler()
+        scheduler.register_line('test_line', 1.0)
+
+        self.assertTrue(scheduler.is_active('test_line'))
+
 
 class TestCSchedulerAsync(unittest.TestCase):
     def test_run_line_non_loop(self):
@@ -134,6 +140,19 @@ class TestCSchedulerAsync(unittest.TestCase):
         asyncio.run(run_test())
         mock_task1.assert_called_once()
         mock_task2.assert_called_once()
+
+    def test_run_line_loop_without_start_time_runs_immediately(self):
+        scheduler = CScheduler()
+        scheduler.register_line('test_line', 0.01, is_loop=True, end_time=datetime.now() + timedelta(seconds=0.03))
+
+        mock_task = MagicMock()
+        scheduler.register_tasks('test_line', [mock_task])
+
+        async def run_test():
+            await scheduler._run_line('test_line')
+
+        asyncio.run(run_test())
+        mock_task.assert_called()
 
 
 if __name__ == '__main__':
