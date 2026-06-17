@@ -287,25 +287,21 @@ class Table:
         df: pd.DataFrame = df.replace([np.inf, -np.inf, np.nan], None)
         return df
 
-    def insert_records(self, df: pd.DataFrame):
+    def insert_records(self, df: pd.DataFrame, upsert: bool = True):
+        ''' upsert=False 时跳过"查已存在记录"的逐批搜索,直接纯插入。
+        清空表后(如 del_all)整表为空,upsert 搜索必然匹配不到,既浪费调用又会撞限流抛错,故用纯插入。'''
         if df is None or len(df) == 0:
             return 0
 
         df = self.clean_df(df)
         df = self.format_type_df_before_CU(df)
-        if self.primary_fields is None or len(self.primary_fields) == 0:
+        has_primary = self.primary_fields is not None and len(self.primary_fields) > 0
+        if has_primary:
+            df = df.drop_duplicates(subset=self.primary_fields, keep='first')
+        if not upsert or not has_primary:
             return self._insert_records(df)
         else:
-            df = df.drop_duplicates(subset=self.primary_fields, keep='first')
-
-            def build_primary_filter() -> FilterInfo:
-                return FilterInfo().builder().conjunction('or').conditions([
-                    FilterInfo().builder().conjunction('and').conditions([
-                        Condition().builder().field_name(k).operator("is").value(v).build()
-                        for k, v in row.items()]).build()
-                    for _, row in df.loc[:, self.primary_fields].iterrows()]).build()
-            finfo: FilterInfo = build_primary_filter()
-            df_existed = self.search_records(field_names=self.primary_fields, filter=finfo)
+            df_existed = self._search_existing_primary_records(df)
             count = 0
             if df_existed is not None and len(df_existed) > 0:
                 field_record_id = _FS.BITABLE.TABLE.RECORD.ID
@@ -319,6 +315,23 @@ class Table:
                 df_insert = df
             count += self._insert_records(df_insert)
             return count
+
+    def _build_primary_filter(self, df: pd.DataFrame) -> FilterInfo:
+        # 搜索接口 filter.conditions 只接受扁平 Condition,不支持嵌套条件组;
+        # 故按主键首字段做 OR(is) 粗筛,精确复合匹配交给上游 merge(on=primary_fields)
+        field = self.primary_fields[0]
+        return FilterInfo().builder().conjunction('or').conditions([
+            Condition().builder().field_name(field).operator("is").value([str(v)]).build()
+            for v in df.loc[:, field]]).build()
+
+    # 飞书 search 接口 filter.conditions 上限 50,每行生成一个 OR 条件,故 batch_size<=50
+    def _search_existing_primary_records(self, df: pd.DataFrame, batch_size: int = 50) -> Optional[pd.DataFrame]:
+        dfs = []
+        for idf in batch_split(df.loc[:, self.primary_fields], batch_size):
+            df_existed = self.search_records(field_names=self.primary_fields, filter=self._build_primary_filter(idf))
+            if df_existed is not None and len(df_existed) > 0:
+                dfs.append(df_existed)
+        return pd.concat(dfs) if len(dfs) > 0 else None
 
     def _insert_records(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
