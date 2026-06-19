@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash tools/scripts/quick_test.sh 2>&1 | head -5",
+            "timeout": 60000
+          }
+        ]
+      }
+    ]
+  }
+}

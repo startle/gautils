@@ -7,15 +7,22 @@ import time
 
 from gautils.feishu.core import BiTable, Feishu, TableField
 from lark_oapi.api.bitable.v1 import *
+from test_gautils.env import require_env
 
 class TestBiTable(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.fs = Feishu('cli_a5e0366e397cd00e', 'abi2ikgvkTDr2V3K8aykphJfVC0YUrGR')
+        app_id, app_secret, app_token, table_id = require_env(
+            'FEISHU_APP_ID',
+            'FEISHU_APP_SECRET',
+            'FEISHU_BITABLE_APP_TOKEN',
+            'FEISHU_BITABLE_TABLE_ID',
+        )
+        cls.fs = Feishu(app_id, app_secret)
         # 使用固定的bitable
         cls.bitable_name = f'unittest_temp_{int(time.time())}'
-        cls.bitable: BiTable = cls.fs.get_bitable('CdrebZpFeayOA9s7h95caVO6nfb')
-        cls.table = cls.bitable.get_table(table_id='tblGjV9Vn7K1sLAz')
+        cls.bitable: BiTable = cls.fs.get_bitable(app_token)
+        cls.table = cls.bitable.get_table(table_id=table_id)
 
     @classmethod
     def tearDownClass(cls):

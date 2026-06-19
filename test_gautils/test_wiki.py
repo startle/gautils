@@ -3,6 +3,7 @@ import unittest
 import time
 
 from gautils.feishu.core import Wiki, WikiSpace, Feishu
+from test_gautils.env import require_env
 
 
 class TestWiki(unittest.TestCase):
@@ -10,11 +11,18 @@ class TestWiki(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.fs = Feishu('cli_a5e0366e397cd00e', 'abi2ikgvkTDr2V3K8aykphJfVC0YUrGR')
+        app_id, app_secret, space_id, node_token = require_env(
+            'FEISHU_APP_ID',
+            'FEISHU_APP_SECRET',
+            'FEISHU_WIKI_SPACE_ID',
+            'FEISHU_WIKI_NODE_TOKEN',
+        )
+        cls.fs = Feishu(app_id, app_secret)
         cls.wiki: Wiki = cls.fs.get_wiki()
         # 使用指定的知识空间token（注意：wiki space_id 需要是整数类型）
         # 如果提供的token不是纯数字，可能需要使用其他API或方式
-        cls.space_id = 'MpauwiWCZiWVudkElnWc5rKsnbf'
+        cls.space_id = space_id
+        cls.node_token = node_token
         cls.space: WikiSpace = cls.wiki.get_space(cls.space_id)
         cls.test_marker = f"unittest_{int(time.time())}"
 
@@ -118,7 +126,7 @@ class TestWiki(unittest.TestCase):
     def test_get_info_by_node_token(self):
         """测试通过节点token获取空间信息"""
         # 使用提供的字符串token作为节点token
-        node_token = 'MpauwiWCZiWVudkElnWc5rKsnbf'
+        node_token = self.node_token
         print(f'使用节点token: {node_token}')
         info = self.space.get_info_by_node_token(node_token, obj_type='docx')
         print(f'通过节点获取的空间信息: {info}')

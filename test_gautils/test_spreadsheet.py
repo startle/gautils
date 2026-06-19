@@ -7,6 +7,7 @@ import time
 from datetime import datetime
 
 from gautils.feishu.core import Spreadsheet, Feishu, Sheet
+from test_gautils.env import require_env
 
 
 class TestSpreadsheet(unittest.TestCase):
@@ -14,9 +15,14 @@ class TestSpreadsheet(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.fs = Feishu('cli_a5e0366e397cd00e', 'abi2ikgvkTDr2V3K8aykphJfVC0YUrGR')
+        app_id, app_secret, spreadsheet_token = require_env(
+            'FEISHU_APP_ID',
+            'FEISHU_APP_SECRET',
+            'FEISHU_SPREADSHEET_TOKEN',
+        )
+        cls.fs = Feishu(app_id, app_secret)
         # 使用指定的电子表格token
-        cls.spreadsheet_token = 'CSglsjftnh5EOJtONflcZS1Vnlf'
+        cls.spreadsheet_token = spreadsheet_token
         cls.spreadsheet: Spreadsheet = cls.fs.get_spreadsheet(cls.spreadsheet_token)
         cls.test_marker = f"unittest_{int(time.time())}"
 
