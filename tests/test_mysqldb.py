@@ -1,8 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
-from gautils.mysqldb import And
+from gautils.mysqldb import And, DbAlchemy
 
 
 class TestAnd(unittest.TestCase):
@@ -48,6 +49,27 @@ class TestAnd(unittest.TestCase):
         a = And()
         a.eq('x', 7).between('d', '2024-01-01', '2024-12-31')
         self.assertEqual(a.params(), [7, '2024-01-01', '2024-12-31'])
+
+
+class TestDbAlchemy(unittest.TestCase):
+
+    @patch('gautils.mysqldb.create_engine')
+    def test_default_driver_remains_pymysql(self, mock_create_engine):
+        DbAlchemy('u', 'p', 'h', 3306, 'd', charset='utf8')
+
+        args, kwargs = mock_create_engine.call_args
+        self.assertTrue(args[0].startswith('mysql+pymysql://'))
+        self.assertIn('charset=utf8', args[0])
+        self.assertEqual(kwargs['connect_args'], {})
+
+    @patch('gautils.mysqldb.create_engine')
+    def test_mysqldb_compress_uses_connect_args(self, mock_create_engine):
+        DbAlchemy('u', 'p', 'h', 3306, 'd', driver='mysqldb', compress=True, charset='utf8')
+
+        args, kwargs = mock_create_engine.call_args
+        self.assertTrue(args[0].startswith('mysql+mysqldb://'))
+        self.assertIn('charset=utf8', args[0])
+        self.assertEqual(kwargs['connect_args'], {'compress': True})
 
 
 if __name__ == '__main__':

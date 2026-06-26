@@ -241,12 +241,18 @@ class MysqlDbImpl(MysqlDb):
             yield df
 
 class DbAlchemy(MysqlDb):
-    def __init__(self, user, pwd, host, port, db, **kws) -> None:
-        conn_str = f'mysql+pymysql://{user}:{quote_plus(pwd)}@{host}:{port}/{db}'
+    def __init__(self, user, pwd, host, port, db, driver='pymysql', compress=False, **kws) -> None:
+        connect_args = {}
+        if driver == 'mysqldb' and compress:
+            connect_args['compress'] = True
+        elif compress:
+            kws['compress'] = 'true'
+        conn_str = f'mysql+{driver}://{user}:{quote_plus(pwd)}@{host}:{port}/{db}'
         if len(kws) > 0:
             conn_str += '?' + '&'.join([f'{k}={v}' for k, v in kws.items()])
         self.engine = create_engine(conn_str,
-                                    pool_size=5, max_overflow=10, pool_recycle=3600, pool_pre_ping=True, echo=False)
+                                    pool_size=5, max_overflow=10, pool_recycle=3600,
+                                    pool_pre_ping=True, echo=False, connect_args=connect_args)
     def s_query(self, table, cols=None) -> MysqlQuery:
         raise ValueError('Unsupported Operation.[s_query]')
     def query(self, sql: str, *params, **kws) -> pd.DataFrame:
