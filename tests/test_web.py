@@ -100,6 +100,17 @@ class TestCookieManager(unittest.TestCase):
         manager = CookieManager(self.temp_file)
         self.assertEqual(manager.cookies, cookies)
 
+    def test_load_blank_or_null_file_returns_empty_dict(self):
+        # 文件存在但内容为空/null/纯注释：yaml.safe_load 返回 None，
+        # 必须兜底成 {}，否则后续 .get 会 AttributeError（生产事故根因）
+        for body in ('', 'null\n', '# only comment\n'):
+            with open(self.temp_file, 'w', encoding='utf8') as f:
+                f.write(body)
+            self.assertEqual(
+                CookieManager(self.temp_file).cookies, {},
+                f'blank/null cookie file should degrade to {{}}, body={body!r}',
+            )
+
     def test_update_and_save_cookies(self):
         manager = CookieManager(self.temp_file)
         manager.update_cookies({'newsite.com': {'token': 'xyz'}})

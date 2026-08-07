@@ -85,7 +85,9 @@ class CookieManager:
         try:
             if os.path.exists(self.filename):
                 with open(self.filename, 'r', encoding='utf8') as f:
-                    return yaml.safe_load(f)
+                    data = yaml.safe_load(f)
+                    # 空文件/纯注释/null 会让 safe_load 返回 None，兜底成 {} 防止 cookies 锁死
+                    return data if isinstance(data, dict) else {}
         except Exception as e:
             print(f"Error loading cookies: {e}")
         return {}
