@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import logging
+import tempfile
 import yaml
 import requests
 
@@ -93,8 +94,17 @@ class CookieManager:
         return {}
     def save_cookies(self):
         try:
-            with open(self.filename, 'w', encoding='utf8') as f:
-                yaml.dump(self.cookies, f)
+            # 原子写：先写临时文件再 os.replace，避免并发读时读到截断的半成品（cookies 锁死触发源）
+            dir_ = os.path.dirname(os.path.abspath(self.filename)) or '.'
+            fd, tmp_path = tempfile.mkstemp(dir=dir_, suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'w', encoding='utf8') as f:
+                    yaml.dump(self.cookies, f)
+                os.replace(tmp_path, self.filename)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
         except Exception as e:
             print(f"Error saving cookies: {e}")
     def update_cookies(self, new_cookies):

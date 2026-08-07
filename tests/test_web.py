@@ -118,6 +118,15 @@ class TestCookieManager(unittest.TestCase):
         manager2 = CookieManager(self.temp_file)
         self.assertIn('newsite.com', manager2.cookies)
 
+    def test_save_cookies_writes_valid_dict(self):
+        # 原子写落盘的应是可被 safe_load 还原为 dict 的有效 YAML，
+        # 不能是 null/半成品（否则下次 load 又锁死）
+        manager = CookieManager(self.temp_file)
+        manager.cookies = {'host.com': {'k': 'v'}}
+        manager.save_cookies()
+        with open(self.temp_file, 'r', encoding='utf8') as f:
+            self.assertEqual(yaml.safe_load(f), {'host.com': {'k': 'v'}})
+
 
 class TestWeb(unittest.TestCase):
     def setUp(self):
