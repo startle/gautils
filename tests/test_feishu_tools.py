@@ -48,9 +48,16 @@ class TestSendFsRobotMsg(unittest.TestCase):
             send_fs_robot_msg('https://open.feishu.cn/open-apis/bot/v2/hook/test')
         self.assertIn('empty', str(context.exception).lower())
 
-    def test_send_empty_list(self):
-        result = send_fs_robot_msg('https://open.feishu.cn/open-apis/bot/v2/hook/test', [])
-        self.assertIsNone(result)
+    @patch('gautils.feishu.tools.requests.post')
+    def test_send_empty_messages(self, mock_post):
+        for msgs in ([], ''):
+            with self.subTest(msgs=msgs):
+                result = send_fs_robot_msg(
+                    'https://open.feishu.cn/open-apis/bot/v2/hook/test', msgs,
+                )
+
+                self.assertIsNone(result)
+        mock_post.assert_not_called()
 
 
 if __name__ == '__main__':
