@@ -376,16 +376,19 @@ class TestTableInsertRecords(unittest.TestCase):
                 patch.object(self.table, 'search_records', side_effect=[
                     pd.DataFrame({'name': ['name_0']}, index=['rec_0']),
                     None,
+                    None,
                     pd.DataFrame({'name': ['name_150']}, index=['rec_150']),
+                    None,
+                    None,
                 ]) as mock_search, \
                 patch.object(self.table, '_update_rows', return_value=2) as mock_update, \
                 patch.object(self.table, '_insert_records', return_value=249) as mock_insert:
             count = self.table.insert_records(df)
 
         self.assertEqual(count, 251)
-        self.assertEqual(mock_search.call_count, 3)
+        self.assertEqual(mock_search.call_count, 6)
         search_sizes = [len(call.kwargs['filter'].conditions) for call in mock_search.call_args_list]
-        self.assertEqual(search_sizes, [100, 100, 51])
+        self.assertEqual(search_sizes, [50, 50, 50, 50, 50, 1])
         mock_update.assert_called_once()
         mock_insert.assert_called_once()
         self.assertEqual(set(mock_update.call_args.args[0].index), set(existed.index))
