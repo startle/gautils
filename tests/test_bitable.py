@@ -96,6 +96,8 @@ class TestTableQueryAndFormat(unittest.TestCase):
 
     def _mock_fields(self, fields):
         data = MagicMock()
+        data.has_more = False
+        data.page_token = None
         data.items = [
             _mock_field_item(field_id=f'fld_{i}', field_name=name, field_type=field_type, desc=desc)
             for i, (name, field_type, desc) in enumerate(fields)
@@ -115,10 +117,62 @@ class TestTableQueryAndFormat(unittest.TestCase):
         self.assertEqual(first[_FS.BITABLE.TABLE.FIELD.NAME].tolist(), ['name', 'value'])
         self.bitable.client.bitable.v1.app_table_field.list.assert_called_once()
 
+    def test_query_fields_paginates_and_caches(self):
+        data1 = MagicMock()
+        data1.has_more = True
+        data1.page_token = 'next'
+        data1.items = [
+            _mock_field_item('fld_1', 'first', _FS.BITABLE.TABLE.FIELD.V_TEXT),
+        ]
+        data2 = MagicMock()
+        data2.has_more = False
+        data2.page_token = None
+        data2.items = [
+            _mock_field_item('fld_2', 'second', _FS.BITABLE.TABLE.FIELD.V_NUMBER),
+        ]
+        self.bitable.client.bitable.v1.app_table_field.list.side_effect = [
+            _mock_response(data=data1),
+            _mock_response(data=data2),
+        ]
+
+        first = self.table.query_fields()
+        second = self.table.query_fields()
+
+        self.assertIs(first, second)
+        self.assertEqual(
+            first[_FS.BITABLE.TABLE.FIELD.NAME].tolist(),
+            ['first', 'second'],
+        )
+        self.assertEqual(
+            self.bitable.client.bitable.v1.app_table_field.list.call_count,
+            2,
+        )
+        requests = [
+            call.args[0]
+            for call in self.bitable.client.bitable.v1.app_table_field.list.call_args_list
+        ]
+        self.assertEqual([request.page_token for request in requests], ['', 'next'])
+        self.assertEqual([request.page_size for request in requests], [100, 100])
+
     def test_query_fields_failure_keeps_legacy_none(self):
         self.bitable.client.bitable.v1.app_table_field.list.return_value = _mock_response(success=False, code=1)
 
         self.assertIsNone(self.table.query_fields())
+        self.assertIsNone(self.table.query_fields())
+        self.assertEqual(
+            self.bitable.client.bitable.v1.app_table_field.list.call_count,
+            2,
+        )
+
+    def test_query_fields_empty_result_is_cached(self):
+        self._mock_fields([])
+
+        first = self.table.query_fields()
+        second = self.table.query_fields()
+
+        self.assertIs(first, second)
+        self.assertTrue(first.empty)
+        self.bitable.client.bitable.v1.app_table_field.list.assert_called_once()
 
     def test_primary_and_modifiable_fields(self):
         self._mock_fields([
@@ -185,6 +239,37 @@ class TestTableQueryAndFormat(unittest.TestCase):
             result = self.table.search_records()
 
         self.assertEqual(result.loc['rec_1', 'text'], 'hello')
+        self.assertEqual(str(result.loc['rec_1', 'date'].tz), 'Asia/Shanghai')
+
+    def test_list_records_normalizes_field_from_second_metadata_page(self):
+        record_data = MagicMock()
+        record_data.has_more = False
+        record_data.page_token = None
+        record_data.items = [_mock_record_item('rec_1', {'date': 0})]
+        self.bitable.client.bitable.v1.app_table_record.search.return_value = \
+            _mock_response(data=record_data)
+
+        fields1 = MagicMock()
+        fields1.has_more = True
+        fields1.page_token = 'next'
+        fields1.items = [
+            _mock_field_item('fld_1', 'name', _FS.BITABLE.TABLE.FIELD.V_TEXT),
+        ]
+        fields2 = MagicMock()
+        fields2.has_more = False
+        fields2.page_token = None
+        fields2.items = [
+            _mock_field_item('fld_2', 'date', _FS.BITABLE.TABLE.FIELD.V_DATETIME),
+        ]
+        self.bitable.client.bitable.v1.app_table_field.list.side_effect = [
+            _mock_response(data=fields1),
+            _mock_response(data=fields2),
+        ]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            result = self.table.list_records(field_names=['date'])
+
         self.assertEqual(str(result.loc['rec_1', 'date'].tz), 'Asia/Shanghai')
 
     def test_search_records_raises_on_api_failure(self):

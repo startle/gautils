@@ -85,14 +85,20 @@ class Table:
         self._fields = None
 
     def query_fields(self):
-        def inner():
+        failed = False
+
+        def inner(page_token=None):
+            nonlocal failed
             request = ListAppTableFieldRequest.builder() \
                 .app_token(self._bitable.app_token) \
-                .table_id(self.id).build()
+                .table_id(self.id) \
+                .page_token(page_token if page_token is not None else '') \
+                .page_size(100).build()
             response: ListAppTableFieldResponse = self._bitable.client.bitable.v1.app_table_field.list(request)
             if not response.success():
                 lark.logger.error(f"client.bitable.v1.app_table_field.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
-                return
+                failed = True
+                return False, None, None
             indexes = [x.field_id for x in response.data.items]
             df = pd.DataFrame([pd.Series({
                 _FS.BITABLE.TABLE.FIELD.NAME: x.field_name,
@@ -100,9 +106,11 @@ class Table:
                 _FS.BITABLE.TABLE.FIELD.DESC: x.description,
                 _FS.BITABLE.TABLE.FIELD.TYPE: x.type,
             }) for x in response.data.items], index=indexes)
-            return df
+            return response.data.has_more, response.data.page_token, df
         if self._fields is None:
-            self._fields = inner()
+            fields = _query_has_more_list_by_page_token(inner)
+            if not failed:
+                self._fields = fields if fields is not None else pd.DataFrame()
         return self._fields
 
     def clean_df(self, df: pd.DataFrame):
