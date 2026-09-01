@@ -148,6 +148,46 @@ class TestKVTable(unittest.TestCase):
         if df_update is not None:
             self.assertTrue(df_update.empty, "数据未变更，df_update 应为空")
 
+    def test_insert_bulk_encoding_matches_legacy_series_json(self):
+        self.mock_db.query.return_value = pd.DataFrame(columns=['keys'])
+        self.mock_db.update.return_value = 2
+        frame = pd.DataFrame({
+            'key1': ['中', 'b'],
+            'key2': [1, 2],
+            'value': ['x', None],
+        }, index=[20, 10])
+        expected = frame.astype(str).sort_values(['key1', 'key2'])
+        expected_datas = expected.apply(lambda row: row.to_json(), axis=1).tolist()
+        expected_keys = expected[['key1', 'key2']].apply(
+            KEY_ENCODE_MD5, axis=1).tolist()
+
+        self.kv_table.insert(frame)
+
+        payload = self.mock_db.update.call_args.args[1]
+        self.assertEqual(payload['datas'].tolist(), expected_datas)
+        self.assertEqual(payload['keys'].tolist(), expected_keys)
+
+    def test_insert_keeps_custom_key_encoder_contract(self):
+        self.mock_db.query.return_value = pd.DataFrame(columns=['keys'])
+        calls = []
+        def custom(row):
+            calls.append(row.copy())
+            return '|'.join(row.tolist())
+        table = KVTable(
+            db=self.mock_db,
+            table='test_table',
+            name='test_name',
+            keys=['key1', 'key2'],
+            key_encode=custom,
+        )
+
+        table.insert(pd.DataFrame({'key1': ['a'], 'key2': [1]}))
+
+        self.assertEqual(len(calls), 1)
+        self.assertIsInstance(calls[0], pd.Series)
+        payload = self.mock_db.update.call_args.args[1]
+        self.assertEqual(payload['keys'].tolist(), ['a|1'])
+
 
 if __name__ == '__main__':
     unittest.main()

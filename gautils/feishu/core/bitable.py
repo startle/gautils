@@ -150,6 +150,8 @@ class Table:
         df = _query_has_more_list_by_page_token(inner)
 
         def normalize_datas_from_fs(df: pd.DataFrame, df_fields: pd.DataFrame):
+            if df is None or len(df) == 0:
+                return None
             field_dict = df_fields.set_index(_FS.BITABLE.TABLE.FIELD.NAME).to_dict('index')
 
             def read_text(v):
@@ -202,8 +204,6 @@ class Table:
                 except Exception as e:
                     raise ValueError(f"[readdata error]: field[{sr.name}] type[{field_type}] n_data[{len(sr)}] data:\n{sr.iloc[:5]}") from e
                 raise ValueError(f"[unsupported type]: {field_type}")
-            if df is None or len(df) == 0:
-                return None
             df = df.apply(normalize_by_col)
             return df
         return normalize_datas_from_fs(df, self.query_fields())
@@ -223,8 +223,8 @@ class Table:
         '''TooLargeCell(1254130) 触发时,定位是哪行哪列过大,打印前 top_n 个最大单元格'''
         try:
             sizes = []
-            for ridx, row in df.iterrows():
-                for col, val in row.items():
+            for col, values in df.items():
+                for ridx, val in values.items():
                     if val is None:
                         continue
                     try:
@@ -242,7 +242,7 @@ class Table:
 
     def format_type_df_before_CU(self, df: pd.DataFrame):
         FTF = _FS.BITABLE.TABLE.FIELD
-        for index, row in self.query_fields().iterrows():
+        for row in self.query_fields().to_dict('records'):
             _type = row[FTF.TYPE]
             col = row[FTF.NAME]
             if col not in df.columns:
@@ -335,11 +335,17 @@ class Table:
     # 飞书 search 接口 filter.conditions 上限 50,每行生成一个 OR 条件,故 batch_size<=50
     def _search_existing_primary_records(self, df: pd.DataFrame, batch_size: int = 50) -> Optional[pd.DataFrame]:
         dfs = []
-        for idf in batch_split(df.loc[:, self.primary_fields], batch_size):
+        # API 只能按首主键做 OR 粗筛。同一首主键跨批会重复返回整组记录，
+        # 最终 merge 产生笛卡尔式重复；先按首主键去重分批，再按 record_id 去重。
+        first_primary = self.primary_fields[0]
+        candidates = df.loc[:, self.primary_fields].drop_duplicates(subset=[first_primary])
+        for idf in batch_split(candidates, batch_size):
             df_existed = self.search_records(field_names=self.primary_fields, filter=self._build_primary_filter(idf))
             if df_existed is not None and len(df_existed) > 0:
                 dfs.append(df_existed)
-        return pd.concat(dfs) if len(dfs) > 0 else None
+        if not dfs:
+            return None
+        return pd.concat(dfs).loc[lambda value: ~value.index.duplicated(keep='first')]
 
     def _insert_records(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
@@ -352,7 +358,7 @@ class Table:
                 .request_body(BatchCreateAppTableRecordRequestBody.builder()
                               .records([AppTableRecord.builder()
                                         .fields({k: v for k, v in row.items() if v is not None}).build()
-                                        for _, row in df.iterrows()]).build()
+                                        for row in df.to_dict('records')]).build()
                               ).build()
             response: BatchCreateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_create(request)
             if not response.success():
@@ -361,7 +367,7 @@ class Table:
                     self._dump_oversized_cells(df, op='batch_create')
                 return 0
             return len(df)
-        return sum([inner(x) for x in batch_split(df, 1000)])
+        return sum(inner(x) for x in batch_split(df, 1000))
 
     def _update_rows(self, df: pd.DataFrame):
         if df is None or len(df) == 0:
@@ -375,7 +381,7 @@ class Table:
                                                                        .records([
                                                                            AppTableRecord.builder()
                                                                            .fields({k: v for k, v in row.items() if v is not None}).record_id(index).build()
-                                                                           for index, row in df.iterrows()])
+                                                                           for index, row in zip(df.index, df.to_dict('records'))])
                                                                        .build())
                                                          ).build()
             response: BatchUpdateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_update(request)
@@ -385,7 +391,7 @@ class Table:
                     self._dump_oversized_cells(df, op='batch_update')
                 return 0
             return len(response.data.records)
-        return sum([inner(x) for x in batch_split(df, 1000)])
+        return sum(inner(x) for x in batch_split(df, 1000))
 
     def del_rows(self):
         return self.del_rows_by_filter()
@@ -408,7 +414,7 @@ class Table:
             if response.data is None:
                 return 0
             return len(response.data.records)
-        return sum([inner(x) for x in batch_split(record_ids, 500)])
+        return sum(inner(x) for x in batch_split(record_ids, 500))
 
     @property
     def id(self):

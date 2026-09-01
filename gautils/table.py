@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import pandas as pd
 
@@ -6,10 +7,15 @@ from .mysqldb import MysqlDb
 def KEY_ENCODE_JSON(sr: pd.Series):
     return sr.to_json()
 def KEY_ENCODE_MD5(sr: pd.Series):
-    import hashlib
     content = sr.to_json()
     md5_hash = hashlib.md5(content.encode("utf-8"))
     return md5_hash.hexdigest()
+
+
+def _json_rows(df: pd.DataFrame):
+    return df.to_json(orient='records', lines=True).splitlines()
+
+
 class KVTable:
     def __init__(self, db: MysqlDb, table: str, name: str, keys: list[str], key_encode=None):
         self._db = db
@@ -18,8 +24,6 @@ class KVTable:
         self._keys = keys
         self._key_encode = KEY_ENCODE_MD5 if key_encode is None else key_encode
     def insert(self, sdf: pd.DataFrame):
-        def data_encode(sr: pd.Series):
-            return sr.to_json()
         if sdf is None or len(sdf) == 0:
             return None, None
         sdf = sdf.astype(str)
@@ -29,8 +33,17 @@ class KVTable:
         name_col = 'name'
         datas_col = 'datas'
 
-        sdf[datas_col] = sdf.apply(data_encode, axis=1)
-        sdf[key_col] = sdf[self._keys].apply(self._key_encode, axis=1)
+        sdf[datas_col] = _json_rows(sdf)
+        if self._key_encode in (KEY_ENCODE_JSON, KEY_ENCODE_MD5):
+            encoded_keys = _json_rows(sdf[self._keys])
+            if self._key_encode is KEY_ENCODE_MD5:
+                encoded_keys = [
+                    hashlib.md5(value.encode('utf-8')).hexdigest()
+                    for value in encoded_keys
+                ]
+            sdf[key_col] = encoded_keys
+        else:
+            sdf[key_col] = sdf[self._keys].apply(self._key_encode, axis=1)
         sdf[name_col] = self._name
 
         keys = sdf[key_col].unique().tolist()

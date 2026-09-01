@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import math
 import time
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import numpy as np
@@ -20,6 +21,8 @@ from gautils.utils import (
     read_lines,
     write_lines,
     singleton,
+    conf_logging_by_yml,
+    watch_process,
 )
 
 
@@ -85,6 +88,9 @@ class TestReadDicts(unittest.TestCase):
         s = 'key=hello%20world'
         result = read_dicts(s, parse_unquote=None)
         self.assertEqual(result['key'], 'hello%20world')
+
+    def test_malformed_pairs_are_ignored(self):
+        self.assertEqual(read_dicts('missing&=value&ok=yes'), {'ok': 'yes'})
 
 
 class TestUrlParseUnquote(unittest.TestCase):
@@ -157,6 +163,9 @@ class TestBinsearch(unittest.TestCase):
         self.assertEqual(binsearch(data, 10), 0)
         self.assertEqual(binsearch(data, 20), 1)
 
+    def test_missing_value_inside_range(self):
+        self.assertEqual(binsearch([1, 3, 5, 7], 2), -1)
+
 
 class TestListFiles(unittest.TestCase):
     def setUp(self):
@@ -185,6 +194,16 @@ class TestListFiles(unittest.TestCase):
     def test_invalid_dir(self):
         with self.assertRaises(Exception):
             list_files('/nonexistent/path')
+
+    def test_none_and_nested_directory(self):
+        with self.assertRaises(Exception):
+            list_files(None)
+        with tempfile.TemporaryDirectory() as root:
+            nested = os.path.join(root, 'nested')
+            os.mkdir(nested)
+            path = os.path.join(nested, 'file.txt')
+            open(path, 'w').close()
+            self.assertEqual(list_files(root), [path])
 
 
 class TestReadWriteLines(unittest.TestCase):
@@ -224,6 +243,61 @@ class TestSingleton(unittest.TestCase):
         obj2 = TestClass(2)
         self.assertIs(obj1, obj2)
         self.assertEqual(obj1.value, 1)
+
+
+class TestLoggingAndWatchProcess(unittest.TestCase):
+    def test_conf_logging_by_yml(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.yml', delete=False) as file:
+            file.write('version: 1\nhandlers: {}\nloggers: {}\n')
+            path = file.name
+        try:
+            with patch('logging.config.dictConfig') as configure:
+                conf_logging_by_yml(path)
+            configure.assert_called_once()
+        finally:
+            os.remove(path)
+
+    @patch('gautils.utils.logging.getLogger')
+    @patch('builtins.print')
+    def test_watch_process_formats_arguments_and_logs(self, output, get_logger):
+        logger = get_logger.return_value
+
+        @watch_process(
+            exclude_arg_indexes=[0], exclude_ks=['secret'],
+            arg_index_formatter={1: lambda value: f'custom-{value}'},
+            kw_formatter={'shown': lambda value: value.upper()},
+            threshold=0, std=True,
+        )
+        def target(hidden, value, frame, series, long_text, **kwargs):
+            return 'ok'
+
+        result = target(
+            'hidden', 2, pd.DataFrame({'x': [1]}), pd.Series([1, 2]),
+            'x' * 200, secret='token', shown='yes', plain='value')
+        self.assertEqual(result, 'ok')
+        message = logger.info.call_args.args[0]
+        self.assertIn('custom-2', message)
+        self.assertIn('df[1][1]', message)
+        self.assertIn('series[2]', message)
+        self.assertIn('secret:_', message)
+        self.assertIn('shown:YES', message)
+        self.assertIn('...', message)
+        output.assert_called_once_with(message)
+
+    @patch('gautils.utils.logging.getLogger')
+    def test_watch_process_threshold_and_exception(self, get_logger):
+        @watch_process(threshold=100)
+        def fast():
+            return 1
+        self.assertEqual(fast(), 1)
+        get_logger.assert_not_called()
+
+        @watch_process(threshold=0)
+        def broken():
+            raise LookupError('broken')
+        with self.assertRaisesRegex(LookupError, 'broken'):
+            broken()
+        get_logger.return_value.info.assert_called_once()
 
 
 if __name__ == '__main__':

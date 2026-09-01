@@ -116,14 +116,16 @@ class Web:
         self.headers = headers
         self.verify = verify
         self.build_proxies_f = (lambda : None) if build_proxies_f is None else build_proxies_f
-    def get(self, url, params=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False):
+    def get(self, url, params=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False, headers=None):
         def request(session: requests.Session, url: str):
             proxies = self.build_proxies_f()
-            return session.get(url, headers=self.headers, params=params, verify=self.verify, proxies=proxies, timeout=timeout)
+            request_headers = self.headers if headers is None else headers
+            return session.get(url, headers=request_headers, params=params, verify=self.verify, proxies=proxies, timeout=timeout)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding, raise_for_status=raise_for_status)
-    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False):
+    def post(self, url, params=None, json=None, data=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False, headers=None):
         def request(session: requests.Session, url: str):
-            return session.post(url, headers=self.headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f(), timeout=timeout)
+            request_headers = self.headers if headers is None else headers
+            return session.post(url, headers=request_headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f(), timeout=timeout)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding, raise_for_status=raise_for_status)
     def request(self, url, request_f, retry_times=3, encoding=None, raise_for_status=False):
         session = requests.Session()

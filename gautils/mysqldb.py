@@ -180,7 +180,7 @@ class MysqlDbImpl(MysqlDb):
         df = df.astype('object')
         df.where(df.notna(), None, inplace=True)
         # def format(x): return tuple(None if isinstance(v, float) and math.isnan(v) else v for v in x.values)
-        datas = [tuple(x.values) for _, x in df.loc[:, idx_cols + upd_cols].iterrows()]
+        datas = list(df.loc[:, idx_cols + upd_cols].itertuples(index=False, name=None))
         try:
             with self._get_conn() as conn:
                 cursor = conn.cursor()

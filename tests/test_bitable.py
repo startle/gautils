@@ -356,6 +356,82 @@ class TestTableQueryAndFormat(unittest.TestCase):
 
         self.table._dump_oversized_cells(df, op='test')
 
+    def test_dump_oversized_cells_fallback_none_and_outer_failure(self):
+        circular = []
+        circular.append(circular)
+        self.table._dump_oversized_cells(
+            pd.DataFrame({'none': [None], 'circular': [circular]}), op='fallback')
+        broken = MagicMock()
+        broken.items.side_effect = RuntimeError('broken frame')
+        self.table._dump_oversized_cells(broken, op='broken')
+
+    def test_search_normalizes_plain_scalar_number_and_none_datetime(self):
+        data = MagicMock(has_more=False, page_token=None)
+        data.items = [_mock_record_item('rec', {
+            'plain': 'text', 'number': 3.5, 'date': None,
+        })]
+        self.bitable.client.bitable.v1.app_table_record.search.return_value = _mock_response(data=data)
+        fields = pd.DataFrame([
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'plain', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_TEXT},
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'number', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_NUMBER},
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'date', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_DATETIME},
+        ])
+        with patch.object(self.table, 'query_fields', return_value=fields):
+            result = self.table.search_records()
+        self.assertEqual(result.loc['rec', 'plain'], 'text')
+        self.assertEqual(result.loc['rec', 'number'], 3.5)
+        self.assertIsNone(result.loc['rec', 'date'])
+
+    def test_search_empty_and_text_conversion_error(self):
+        empty = MagicMock(has_more=False, page_token=None, items=[])
+        self.bitable.client.bitable.v1.app_table_record.search.return_value = _mock_response(data=empty)
+        empty_fields = pd.DataFrame(columns=[
+            _FS.BITABLE.TABLE.FIELD.NAME, _FS.BITABLE.TABLE.FIELD.TYPE,
+        ])
+        with patch.object(self.table, 'query_fields', return_value=empty_fields):
+            self.assertIsNone(self.table.search_records())
+
+        bad = MagicMock(has_more=False, page_token=None)
+        bad.items = [_mock_record_item('rec', {'text': []})]
+        self.bitable.client.bitable.v1.app_table_record.search.return_value = _mock_response(data=bad)
+        fields = pd.DataFrame([{
+            _FS.BITABLE.TABLE.FIELD.NAME: 'text',
+            _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_TEXT,
+        }])
+        with patch.object(self.table, 'query_fields', return_value=fields):
+            with self.assertRaisesRegex(ValueError, 'readdata error'):
+                self.table.search_records()
+
+    def test_format_datetime_checkbox_multiselect_and_missing_column(self):
+        fields = pd.DataFrame([
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'missing', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_TEXT},
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'date', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_DATETIME},
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'checkbox', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_FUXUAN},
+            {_FS.BITABLE.TABLE.FIELD.NAME: 'multi', _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_MSELECT},
+        ])
+        frame = pd.DataFrame({
+            'date': ['2024-01-01', None, '2024-01-03', '2024-01-04'],
+            'checkbox': [None, np.nan, 2, object()],
+            'multi': [None, ['x'], {'y'}, np.array(['z'])],
+        })
+        with patch.object(self.table, 'query_fields', return_value=fields):
+            result = self.table.format_type_df_before_CU(frame)
+        self.assertEqual(result['checkbox'].tolist(), [False, False, True, True])
+        self.assertEqual(result.loc[0, 'multi'], [])
+        self.assertEqual(result.loc[1, 'multi'], ['x'])
+        self.assertEqual(result.loc[2, 'multi'], ['y'])
+        self.assertEqual(result.loc[3, 'multi'], ['z'])
+        self.assertIsInstance(result.loc[0, 'date'], int)
+
+    def test_primary_fields_none(self):
+        fields = pd.DataFrame([{
+            _FS.BITABLE.TABLE.FIELD.NAME: 'name',
+            _FS.BITABLE.TABLE.FIELD.TYPE: _FS.BITABLE.TABLE.FIELD.V_TEXT,
+            _FS.BITABLE.TABLE.FIELD.DESC: None,
+        }])
+        with patch.object(self.table, 'query_fields', return_value=fields):
+            self.assertIsNone(self.table.primary_fields)
+
 
 class TestTableInsertRecords(unittest.TestCase):
     def setUp(self):
@@ -393,6 +469,27 @@ class TestTableInsertRecords(unittest.TestCase):
         mock_insert.assert_called_once()
         self.assertEqual(set(mock_update.call_args.args[0].index), set(existed.index))
         self.assertEqual(len(mock_insert.call_args.args[0]), 249)
+
+    def test_empty_insert_and_private_batch_methods(self):
+        self.assertEqual(self.table.insert_records(pd.DataFrame()), 0)
+        self.assertEqual(self.table._insert_records(pd.DataFrame()), 0)
+        self.assertEqual(self.table._update_rows(pd.DataFrame()), 0)
+
+    def test_composite_primary_search_deduplicates_coarse_candidates_and_results(self):
+        frame = pd.DataFrame({
+            'group': ['same'] * 60,
+            'item': list(range(60)),
+        })
+        duplicated = pd.DataFrame(
+            {'group': ['same', 'same'], 'item': [1, 1]},
+            index=['rec_1', 'rec_1'],
+        )
+        with patch.object(Table, 'primary_fields', new_callable=PropertyMock,
+                          return_value=['group', 'item']), \
+                patch.object(self.table, 'search_records', return_value=duplicated) as search:
+            result = self.table._search_existing_primary_records(frame)
+        search.assert_called_once()
+        self.assertEqual(result.index.tolist(), ['rec_1'])
 
     def test_insert_records_without_primary_inserts_directly(self):
         df = pd.DataFrame({'name': ['a']})
@@ -433,12 +530,19 @@ class TestTableInsertRecords(unittest.TestCase):
         mock_dump.assert_called_once()
 
     def test_batch_create_success_returns_input_count(self):
-        df = pd.DataFrame({'name': ['a', 'b']})
+        df = pd.DataFrame({
+            'name': ['a', 'b'],
+            'optional': pd.Series([None, 'x'], dtype=object),
+        })
         self.bitable.client.bitable.v1.app_table_record.batch_create.return_value = _mock_response()
 
         result = self.table._insert_records(df)
 
         self.assertEqual(result, 2)
+        request = self.bitable.client.bitable.v1.app_table_record.batch_create.call_args.args[0]
+        records = request.request_body.records
+        self.assertEqual(records[0].fields, {'name': 'a'})
+        self.assertEqual(records[1].fields, {'name': 'b', 'optional': 'x'})
 
     def test_batch_update_failure_returns_zero_and_dumps_too_large_cell(self):
         df = pd.DataFrame({'name': ['a']}, index=['rec_1'])
@@ -454,7 +558,13 @@ class TestTableInsertRecords(unittest.TestCase):
         mock_dump.assert_called_once()
 
     def test_batch_update_success_returns_response_record_count(self):
-        df = pd.DataFrame({'name': ['a', 'b']}, index=['rec_1', 'rec_2'])
+        df = pd.DataFrame(
+            {
+                'name': ['a', 'b'],
+                'optional': pd.Series(
+                    [None, 'x'], index=['rec_1', 'rec_2'], dtype=object),
+            },
+            index=['rec_1', 'rec_2'])
         data = MagicMock()
         data.records = [MagicMock(), MagicMock()]
         self.bitable.client.bitable.v1.app_table_record.batch_update.return_value = _mock_response(data=data)
@@ -462,6 +572,12 @@ class TestTableInsertRecords(unittest.TestCase):
         result = self.table._update_rows(df)
 
         self.assertEqual(result, 2)
+        request = self.bitable.client.bitable.v1.app_table_record.batch_update.call_args.args[0]
+        records = request.request_body.records
+        self.assertEqual(records[0].record_id, 'rec_1')
+        self.assertEqual(records[0].fields, {'name': 'a'})
+        self.assertEqual(records[1].record_id, 'rec_2')
+        self.assertEqual(records[1].fields, {'name': 'b', 'optional': 'x'})
 
 
 class TestTableDeleteRows(unittest.TestCase):
@@ -503,6 +619,15 @@ class TestTableDeleteRows(unittest.TestCase):
             result = self.table.del_rows_by_filter()
 
         self.assertEqual(result, 0)
+
+    def test_del_rows_logs_batch_delete_failure(self):
+        df = pd.DataFrame({'name': ['a']}, index=['rec_1'])
+        data = MagicMock(records=[])
+        self.bitable.client.bitable.v1.app_table_record.batch_delete.return_value = \
+            _mock_response(success=False, data=data)
+        with patch.object(Table, 'primary_fields', new_callable=PropertyMock, return_value=['name']), \
+                patch.object(self.table, 'search_records', return_value=df):
+            self.assertEqual(self.table.del_rows_by_filter(), 0)
 
     def test_del_rows_by_filter_returns_zero_when_no_records(self):
         with patch.object(Table, 'primary_fields', new_callable=PropertyMock, return_value=['name']), \
@@ -576,6 +701,12 @@ class TestBiTable(unittest.TestCase):
     def test_delete_table_by_name_handles_missing_as_success(self):
         with patch.object(self.bitable, 'query_table', return_value=None):
             self.assertTrue(self.bitable.delete_table(table_name='missing'))
+
+    def test_delete_table_by_name_resolves_id(self):
+        row = pd.Series({_FS.BITABLE.TABLE.ID: 'tbl_1'})
+        self.client.bitable.v1.app_table.delete.return_value = _mock_response()
+        with patch.object(self.bitable, 'query_table', return_value=row):
+            self.assertTrue(self.bitable.delete_table(table_name='name'))
 
     def test_delete_table_success_clears_cache(self):
         self.bitable._tables = pd.DataFrame()

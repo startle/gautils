@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from gautils.coroutine import CScheduler
 
@@ -153,6 +153,24 @@ class TestCSchedulerAsync(unittest.TestCase):
 
         asyncio.run(run_test())
         mock_task.assert_called()
+
+    @patch('gautils.coroutine.asyncio.sleep', new_callable=AsyncMock)
+    def test_run_line_waits_for_future_start(self, sleep):
+        scheduler = CScheduler()
+        scheduler.register_line(
+            'future', 0.1, is_loop=True,
+            start_time=datetime.now() + timedelta(seconds=1),
+            end_time=datetime.now() - timedelta(seconds=1),
+        )
+        asyncio.run(scheduler._run_line('future'))
+        sleep.assert_awaited_once()
+
+    @patch('gautils.coroutine.asyncio.run')
+    def test_run_delegates_to_asyncio(self, run):
+        scheduler = CScheduler()
+        scheduler.run()
+        run.assert_called_once()
+        run.call_args.args[0].close()
 
 
 if __name__ == '__main__':

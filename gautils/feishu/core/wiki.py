@@ -201,7 +201,7 @@ class WikiSpace:
         """
         request: CreateSpaceNodeRequest = CreateSpaceNodeRequest.builder() \
             .space_id(self.space_id) \
-            .request_body(CreateSpaceNodeRequestBody.builder()
+            .request_body(Node.builder()
                           .title(title)
                           .obj_type(node_type)
                           .parent_node_token(parent_node_token)
@@ -235,7 +235,7 @@ class WikiSpace:
             .space_id(self.space_id) \
             .node_token(node_token) \
             .request_body(MoveSpaceNodeRequestBody.builder()
-                          .target_parent_node_token(target_parent_token)
+                          .target_parent_token(target_parent_token)
                           .build()) \
             .build()
 
@@ -339,11 +339,11 @@ class WikiSpace:
         """
         request: CreateSpaceMemberRequest = CreateSpaceMemberRequest.builder() \
             .space_id(self.space_id) \
-            .request_body({
-                'member_id': member_id,
-                'member_type': member_type,
-                'member_role': member_role,
-            }) \
+            .request_body(Member.builder()
+                          .member_id(member_id)
+                          .member_type(member_type)
+                          .member_role(member_role)
+                          .build()) \
             .build()
 
         response: CreateSpaceMemberResponse = self.client.wiki.v2.space_member.create(request)
@@ -448,7 +448,7 @@ class Wiki:
             新创建的WikiSpace对象
         """
         request: CreateSpaceRequest = CreateSpaceRequest.builder() \
-            .request_body(CreateSpaceRequestBody.builder()
+            .request_body(Space.builder()
                           .name(name)
                           .description(description)
                           .build()) \

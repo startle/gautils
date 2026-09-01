@@ -94,6 +94,12 @@ flags:
         for key in ('g', 'h', 'i'):
             self.assertTrue(conf.get_bool(['flags', key]), f'flags.{key} should be True')
 
+    def test_get_bool_numeric_values(self):
+        self._create_conf_file('flags:\n  zero: 0\n  one: 1\n')
+        conf = Conf(self.conf_path)
+        self.assertFalse(conf.get_bool(['flags', 'zero']))
+        self.assertTrue(conf.get_bool(['flags', 'one']))
+
     def test_get_dict(self):
         self._create_conf_file('''
 db:

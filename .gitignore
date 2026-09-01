@@ -14,3 +14,6 @@ temp/
 .claude/settings.local.json
 .env.test
 .env
+.coverage
+coverage-*.json
+.pytest_cache/

@@ -16,6 +16,8 @@ class TestSetupMetadata(unittest.TestCase):
         kwargs = mock_setup.call_args.kwargs
         self.assertIn('gautils.feishu', kwargs['packages'])
         self.assertIn('gautils.feishu.core', kwargs['packages'])
+        self.assertIn('gautils.v2', kwargs['packages'])
+        self.assertEqual(kwargs['python_requires'], '>=3.10')
 
         install_requires = kwargs['install_requires']
         for dep in ('numpy', 'requests', 'lark-oapi', 'SQLAlchemy'):

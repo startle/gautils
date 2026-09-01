@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, PropertyMock
 
 import yaml
 import requests
@@ -11,6 +11,9 @@ from gautils.web import (
     default_pc_headers,
     default_phone_headers,
     retry_run,
+    retry_run2,
+    request,
+    request_regular_fetch,
     CookieManager,
     Web,
 )
@@ -31,6 +34,43 @@ class TestGetHost(unittest.TestCase):
 
     def test_invalid_url(self):
         self.assertEqual(get_host('not_a_url'), 'not_a_url')
+
+    def test_empty_url(self):
+        self.assertIsNone(get_host(''))
+
+
+class TestLegacyRequestFunctions(unittest.TestCase):
+    def test_request_dispatch_and_unknown_method(self):
+        with patch('gautils.web.Web') as web_class:
+            web_class.return_value.get.return_value = 'get-body'
+            web_class.return_value.post.return_value = 'post-body'
+            self.assertEqual(request('https://example.com', params={'x': 1}), 'get-body')
+            self.assertEqual(request('https://example.com', _type='post'), 'post-body')
+            self.assertIsNone(request('https://example.com', _type='delete'))
+
+    def test_request_accepts_headers_with_real_web_signature(self):
+        with patch.object(Web, 'request', return_value='body'):
+            self.assertEqual(
+                request('https://example.com', headers={'X-Test': '1'}), 'body')
+
+    def test_regular_fetch_success_no_match_and_request_error(self):
+        pattern = MagicMock()
+        pattern.findall.return_value = ['match']
+        with patch('gautils.web.request', return_value='body'):
+            self.assertEqual(request_regular_fetch(pattern, 'url'), ['match'])
+
+        pattern.findall.return_value = []
+        with patch('gautils.web.request', return_value='body'), \
+                patch('gautils.web.logging.getLogger') as logger:
+            with self.assertRaisesRegex(ValueError, 'failed'):
+                request_regular_fetch(pattern, 'url')
+            logger.return_value.error.assert_called_once()
+
+        with patch('gautils.web.request', side_effect=OSError('offline')), \
+                patch('gautils.web.logging.getLogger') as logger:
+            with self.assertRaisesRegex(OSError, 'offline'):
+                request_regular_fetch(pattern, 'url')
+            logger.return_value.error.assert_called_once()
 
 
 class TestDefaultHeaders(unittest.TestCase):
@@ -79,6 +119,24 @@ class TestRetryRun(unittest.TestCase):
         result = retry_run(mock_func, 'arg1', 'arg2', key='value', retry_times=3, sleep_s=0.01)
         mock_func.assert_called_once_with('arg1', 'arg2', key='value')
 
+    @patch('gautils.web.sys.exit', side_effect=SystemExit)
+    def test_keyboard_interrupt_exits(self, _exit):
+        with self.assertRaises(SystemExit):
+            retry_run(MagicMock(side_effect=KeyboardInterrupt), retry_times=1)
+
+    @patch('gautils.web.time.sleep')
+    def test_retry_run2_success_retry_and_exhaustion(self, sleep):
+        function = MagicMock(side_effect=[ValueError('once'), 'ok'])
+        self.assertEqual(retry_run2(function, retry_times=2, sleep_s=1), 'ok')
+        sleep.assert_called_once_with(1)
+        with self.assertRaisesRegex(RuntimeError, 'retry_run2 exhausted'):
+            retry_run2(MagicMock(side_effect=ValueError('always')), retry_times=2, sleep_s=0)
+
+    @patch('gautils.web.sys.exit', side_effect=SystemExit)
+    def test_retry_run2_keyboard_interrupt_exits(self, _exit):
+        with self.assertRaises(SystemExit):
+            retry_run2(MagicMock(side_effect=KeyboardInterrupt), retry_times=1)
+
 
 class TestCookieManager(unittest.TestCase):
     def setUp(self):
@@ -126,6 +184,23 @@ class TestCookieManager(unittest.TestCase):
         manager.save_cookies()
         with open(self.temp_file, 'r', encoding='utf8') as f:
             self.assertEqual(yaml.safe_load(f), {'host.com': {'k': 'v'}})
+
+    @patch('builtins.print')
+    def test_load_error_falls_back_to_empty(self, output):
+        with patch('gautils.web.os.path.exists', return_value=True), \
+                patch('builtins.open', side_effect=OSError('denied')):
+            self.assertEqual(CookieManager(self.temp_file).cookies, {})
+        output.assert_called_once()
+
+    @patch('builtins.print')
+    def test_save_error_is_reported_and_temp_file_cleaned(self, output):
+        manager = CookieManager(self.temp_file)
+        with patch('gautils.web.yaml.dump', side_effect=ValueError('bad yaml')), \
+                patch('gautils.web.os.remove', wraps=os.remove) as remove:
+            manager.save_cookies()
+        output.assert_called_once()
+        remove.assert_called_once()
+        self.assertFalse(os.path.exists(remove.call_args.args[0]))
 
 
 class TestWeb(unittest.TestCase):
@@ -241,6 +316,78 @@ class TestWeb(unittest.TestCase):
         self.assertEqual(domain, 'test.com')
         self.assertEqual(path, '/api')
         self.assertEqual(params['name'], 'john')
+
+    def test_parse_url_multi_value(self):
+        web = Web(cookies_filepath=self.temp_cookie_file)
+        _, _, params = web.parse_url('https://example.com/?tag=a&tag=b')
+        self.assertEqual(params['tag'], ['a', 'b'])
+
+    @patch('gautils.web.requests.Session')
+    def test_get_and_post_execute_session_callables(self, session_class):
+        session = session_class.return_value
+        get_response = MagicMock(text='get', apparent_encoding='utf8')
+        post_response = MagicMock(text='post', apparent_encoding='utf8')
+        session.get.return_value = get_response
+        session.post.return_value = post_response
+        web = Web(cookies_filepath=self.temp_cookie_file,
+                  headers={'X': '1'}, build_proxies_f=lambda: {'http': 'proxy'})
+        self.assertEqual(web.get('https://example.com', params={'q': 1}, retry_times=1), 'get')
+        self.assertEqual(web.post('https://example.com', json={'x': 1}, retry_times=1), 'post')
+        session.get.assert_called_once()
+        session.post.assert_called_once()
+
+    @patch('gautils.web.requests.Session')
+    def test_get_and_post_keep_legacy_positional_arguments(self, session_class):
+        response = MagicMock(text='body', apparent_encoding='utf8')
+        session_class.return_value.get.return_value = response
+        session_class.return_value.post.return_value = response
+        web = Web(
+            cookies_filepath=self.temp_cookie_file,
+            headers={'X-Legacy': '1'},
+        )
+
+        self.assertEqual(
+            web.get('https://example.com', {'q': 1}, 1, 'utf8', 9, True),
+            'body',
+        )
+        self.assertEqual(
+            web.post(
+                'https://example.com', {'q': 1}, {'json': 1}, 'data',
+                1, 'utf8', 9, True,
+            ),
+            'body',
+        )
+        self.assertEqual(
+            session_class.return_value.get.call_args.kwargs['headers'],
+            {'X-Legacy': '1'},
+        )
+        post_kwargs = session_class.return_value.post.call_args.kwargs
+        self.assertEqual(post_kwargs['headers'], {'X-Legacy': '1'})
+        self.assertEqual(post_kwargs['json'], {'json': 1})
+        self.assertEqual(post_kwargs['data'], 'data')
+
+    @patch('gautils.web.requests.Session')
+    @patch('gautils.web.requests.utils.dict_from_cookiejar')
+    def test_request_persists_updated_cookies(self, cookie_dict, session_class):
+        session = session_class.return_value
+        cookie_dict.return_value = {'sid': 'new'}
+        response = MagicMock(text='ok', apparent_encoding='latin1')
+        web = Web(cookies_filepath=self.temp_cookie_file)
+        request_f = MagicMock(return_value=response)
+        self.assertEqual(web.request('https://example.com', request_f, retry_times=1,
+                                     encoding='utf8'), 'ok')
+        self.assertEqual(web.cookie_manager.cookies['example.com'], {'sid': 'new'})
+        self.assertEqual(response.encoding, 'utf8')
+
+    @patch('gautils.web.requests.Session')
+    def test_response_text_failure_returns_response(self, session_class):
+        response = MagicMock(apparent_encoding='utf8')
+        type(response).text = PropertyMock(side_effect=ValueError('decode failed'))
+        web = Web(cookies_filepath=self.temp_cookie_file)
+        with patch('gautils.web.logging.error') as log:
+            result = web.request('https://example.com', lambda *_: response, retry_times=1)
+        self.assertIs(result, response)
+        log.assert_called_once()
 
 
 if __name__ == '__main__':

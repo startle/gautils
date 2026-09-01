@@ -11,6 +11,7 @@ setup(
   url = 'https://github.com/startle/gautils/',
   download_url = 'https://github.com/startle/gautils/archive/refs/heads/main.zip',
   keywords = ['gau', 'utils'],
+  python_requires='>=3.10',
   install_requires=[
     'numpy>=2.2.6',
     'pandas>=2.2.3',
@@ -25,6 +26,11 @@ setup(
     'Intended Audience :: Developers',      # Define that your audience are developers
     'Topic :: Software Development :: Build Tools',
     'License :: OSI Approved :: MIT License',   # Again, pick a license
-    'Programming Language :: Python :: 3.6',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3.14',
   ],
 )

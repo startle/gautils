@@ -76,7 +76,18 @@ class Feishu(FeishuClient):
         Returns:
             机器人的 open_id
         """
-        from lark_oapi.api.bot.v3 import GetBotInfoRequest, GetBotInfoResponse
+        if self.open_id:
+            return self.open_id
+        app_info = self.get_app_info()
+        if app_info.get('open_id'):
+            return app_info['open_id']
+
+        try:
+            from lark_oapi.api.bot.v3 import GetBotInfoRequest, GetBotInfoResponse
+        except ImportError:
+            lark.logger.warning(
+                '当前 lark-oapi 不提供 bot.v3；请初始化 Feishu 时传入 open_id')
+            return None
 
         request: GetBotInfoRequest = GetBotInfoRequest.builder().build()
         response: GetBotInfoResponse = self.client.bot.v3.info.get(request)
