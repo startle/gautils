@@ -6,6 +6,8 @@ logs
 log.yml
 test.py
 btwatch.py
+restart_btwatch.ps1
+tests/test_btwatch.py
 oa_staff.py
 
 temp/
