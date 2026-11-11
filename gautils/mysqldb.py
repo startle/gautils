@@ -1,7 +1,10 @@
 import os
 import hashlib
+import json
 import logging
 import time
+from datetime import date, datetime, time as datetime_time, timedelta
+from decimal import Decimal
 from enum import Enum
 from urllib.parse import quote_plus
 
@@ -292,8 +295,38 @@ class DbAlchemy(MysqlDb):
                 conn.commit()
                 return result.rowcount
 
+def _cache_value(value):
+    """Encode supported values without losing parameter boundaries or types."""
+    kind = type(value)
+    if value is None or kind in (str, int, float, bool):
+        return [kind.__name__, value]
+    if kind is bytes:
+        return ['bytes', value.hex()]
+    if kind in (date, datetime, datetime_time):
+        return [kind.__name__, value.isoformat()]
+    if kind is timedelta:
+        return ['timedelta', value.days, value.seconds, value.microseconds]
+    if kind is Decimal:
+        return ['Decimal', str(value)]
+    if kind in (list, tuple):
+        return [kind.__name__, [_cache_value(item) for item in value]]
+    if kind is dict and all(type(key) is str for key in value):
+        return ['dict', [[key, _cache_value(value[key])] for key in sorted(value)]]
+    raise TypeError('unsupported cache parameter type')
+
+
+def _query_cache_key(identity, sql, params, named_params):
+    try:
+        payload = json.dumps(_cache_value((identity, sql, params, named_params)),
+                             ensure_ascii=True, allow_nan=False, separators=(',', ':'))
+    except (TypeError, ValueError, RecursionError):
+        return None
+    return 'v2_' + hashlib.sha256(payload.encode('utf8')).hexdigest()
+
+
 def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cache_ttl=None, charset='utf8', conn_type=ConnType.COMMON, **kws) -> MysqlDb:
     kws.update({'charset': charset})
+    cache_identity = (h, p, u, db, str(conn_type), dict(kws))
     if conn_type == ConnType.COMMON:
         db = MysqlDbImpl(h, p, u, pwd, db, **kws)
     elif conn_type == ConnType.ALCHEMY:
@@ -303,19 +336,14 @@ def connect_mysql(h, p, u, pwd, db, is_use_file_cache=False, cache_dir=None, cac
     if cache_dir is None:
         cache_dir = './temp/cache'
 
-    def build_cache_path(sql: str, *params, **kws):
-        key = sql + '_' + '_'.join([str(x) for x in params])
-        if kws:
-            # kws 按 key 排序纳入签名，避免 DbAlchemy 同 SQL 不同参数误命中
-            key += '_' + '_'.join([f'{k}={v}' for k, v in sorted(kws.items())])
-        sign = '%d_%s' % (len(key), hashlib.md5(key.encode(encoding='utf8')).hexdigest())
-        return os.path.join(cache_dir, sign)
-
     if is_use_file_cache:
         os.makedirs(cache_dir, exist_ok=True)
         _orig_query = db.query  # 保存原 bound method，避免内部调用触发自身→无限递归
         def file_cache_query(sql: str, *params, **kws):
-            cache_path = build_cache_path(sql, *params, **kws)
+            key = _query_cache_key(cache_identity, sql, params, kws)
+            if key is None:
+                return _orig_query(sql, *params, **kws)
+            cache_path = os.path.join(cache_dir, key)
             # 命中: 文件存在 且 (无 TTL 或 未过期); 过期则重查覆盖。pickle 保 dtype 往返不失真
             if os.path.isfile(cache_path) and (cache_ttl is None or (time.time() - os.path.getmtime(cache_path)) < cache_ttl):
                 return pd.read_pickle(cache_path)
