@@ -3,8 +3,11 @@ import os
 import time
 import logging
 import tempfile
+from contextlib import AbstractContextManager
 import yaml
 import requests
+
+from .request_sessions import RequestSessions
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +119,16 @@ class Web:
         self.headers = headers
         self.verify = verify
         self.build_proxies_f = (lambda : None) if build_proxies_f is None else build_proxies_f
+        self._sessions = RequestSessions()
+        self._batch_proxies_f = self.build_proxies_f if build_proxies_f is None else None
+
+    def connection_batch(self) -> AbstractContextManager[None]:
+        """Reuse connections serially; client identity and transport stay fixed."""
+        return self._sessions.batch(policy=self._connection_policy())
+
+    def _connection_policy(self) -> tuple:
+        return self.verify, self.build_proxies_f, self.cookie_manager
+
     def get(self, url, params=None, retry_times=3, encoding=None, timeout=DEFAULT_TIMEOUT, raise_for_status=False, headers=None):
         def request(session: requests.Session, url: str):
             proxies = self.build_proxies_f()
@@ -128,24 +141,28 @@ class Web:
             return session.post(url, headers=request_headers, params=params, json=json, data=data, verify=self.verify, proxies=self.build_proxies_f(), timeout=timeout)
         return self.request(url, request_f=request, retry_times=retry_times, encoding=encoding, raise_for_status=raise_for_status)
     def request(self, url, request_f, retry_times=3, encoding=None, raise_for_status=False):
-        session = requests.Session()
-        host = get_host(url)
-        cookies = self.cookie_manager.cookies.get(host, {})
-        session.cookies.update(cookies)
-        response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
-        if raise_for_status:
-            response.raise_for_status()
-        # 从 session 提取服务端返回的 cookies 并持久化
-        updated = requests.utils.dict_from_cookiejar(session.cookies)
-        if updated:
-            self.cookie_manager.cookies[host] = updated
-            self.cookie_manager.save_cookies()
-        response.encoding = response.apparent_encoding if encoding is None else encoding
-        try :
-            return response.text
-        except Exception as e:
-            logging.error(f'[response.text failed.] response:\n {response}', exc_info=e)
-            return response
+        with self._sessions.borrow(
+            url, policy=self._connection_policy(),
+            reuse=self.build_proxies_f is self._batch_proxies_f,
+        ) as session:
+            session.cookies.clear()
+            host = get_host(url)
+            cookies = self.cookie_manager.cookies.get(host, {})
+            session.cookies.update(cookies)
+            response = retry_run2(lambda : request_f(session, url), retry_times=retry_times, sleep_s=5)
+            if raise_for_status:
+                response.raise_for_status()
+            # 从 session 提取服务端返回的 cookies 并持久化
+            updated = requests.utils.dict_from_cookiejar(session.cookies)
+            if updated:
+                self.cookie_manager.cookies[host] = updated
+                self.cookie_manager.save_cookies()
+            response.encoding = response.apparent_encoding if encoding is None else encoding
+            try :
+                return response.text
+            except Exception as e:
+                logging.error(f'[response.text failed.] response:\n {response}', exc_info=e)
+                return response
     def parse_url(self, url):
         from urllib.parse import urlparse, parse_qs
         parsed_url = urlparse(url)
