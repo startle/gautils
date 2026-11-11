@@ -1,22 +1,10 @@
 import unittest
-import sys
-from contextlib import contextmanager
-from types import ModuleType
 from unittest.mock import MagicMock
 
 import pandas as pd
 
 from gautils.feishu.core.spreadsheets import Sheet, Spreadsheet
 from tests.feishu_fakes import obj, response
-
-
-@contextmanager
-def fake_sheet_sdk(*names):
-    module = ModuleType('lark_oapi.api.sheets.v3')
-    for name in names:
-        setattr(module, name, MagicMock())
-    with unittest.mock.patch.dict(sys.modules, {'lark_oapi.api.sheets.v3': module}):
-        yield
 
 
 class TestSheetLegacyContract(unittest.TestCase):
@@ -79,43 +67,22 @@ class TestSpreadsheet(unittest.TestCase):
         self.book._sheets = []
         self.assertIsNone(self.book.get_sheet(sheet_id='missing'))
 
-    def test_create_sheet_success_and_failure(self):
-        names = ('AddSheetRequest', 'AddSheetRequestBody', 'AddSheetResponse',
-                 'SheetProperties', 'GridProperties')
-        with fake_sheet_sdk(*names):
-            self.book._sheets = []
-            api = self.client.sheets.v3.spreadsheet_sheet.add
-            api.return_value = response(data=obj())
-            self.book.get_sheet = MagicMock(return_value='created-sheet')
-            self.assertEqual(self.book.create_sheet('New', 20, 4), 'created-sheet')
-            self.assertIsNone(self.book._sheets)
-
-            api.return_value = response(success=False)
-            self.assertIsNone(self.book.create_sheet('Bad'))
+    def test_create_sheet_is_explicitly_unsupported(self):
+        with self.assertRaises(NotImplementedError):
+            self.book.create_sheet('New', 20, 4)
+        self.client.sheets.v3.spreadsheet_sheet.add.assert_not_called()
 
     def test_delete_sheet_contracts(self):
         with self.assertRaises(ValueError):
             self.book.delete_sheet()
-        self.book._query_sheet = MagicMock(return_value=None)
-        self.assertTrue(self.book.delete_sheet(sheet_title='missing'))
-
-        with fake_sheet_sdk('DeleteSheetRequest', 'DeleteSheetRequestBody', 'DeleteSheetResponse'):
-            api = self.client.sheets.v3.spreadsheet_sheet.delete
-            api.return_value = response(success=False)
-            self.assertFalse(self.book.delete_sheet(sheet_id='s1'))
-            api.return_value = response()
-            self.book._sheets = [{'sheet_id': 's1'}]
-            self.assertTrue(self.book.delete_sheet(sheet_id='s1'))
-            self.assertIsNone(self.book._sheets)
-
-        self.book._query_sheet = MagicMock(return_value={'sheet_id': 's2'})
-        with fake_sheet_sdk('DeleteSheetRequest', 'DeleteSheetRequestBody', 'DeleteSheetResponse'):
-            self.client.sheets.v3.spreadsheet_sheet.delete.return_value = response()
-            self.assertTrue(self.book.delete_sheet(sheet_title='Data'))
+        for options in ({'sheet_id': 's1'}, {'sheet_title': 'Data'}):
+            with self.assertRaises(NotImplementedError):
+                self.book.delete_sheet(**options)
+        self.client.sheets.v3.spreadsheet_sheet.delete.assert_not_called()
 
     def test_metadata_success_cache_and_failure(self):
         api = self.client.sheets.v3.spreadsheet.get
-        api.return_value = response(data=obj(title='Book', url='https://sheet'))
+        api.return_value = response(data=obj(spreadsheet=obj(title='Book', url='https://sheet')))
         expected = {'title': 'Book', 'token': 'book-token', 'url': 'https://sheet'}
         self.assertEqual(self.book.get_metadata(), expected)
         self.assertEqual(self.book.get_metadata(), expected)
@@ -126,7 +93,8 @@ class TestSpreadsheet(unittest.TestCase):
         self.assertEqual(failed.get_metadata(), {})
         empty = Spreadsheet(self.client, 'empty')
         api.return_value = response(data=None)
-        self.assertEqual(empty.get_metadata(), {'title': None, 'token': 'empty', 'url': None})
+        self.assertEqual(empty.get_metadata(), {})
+        self.assertIsNone(empty._metadata)
 
     def test_add_collaborator_success_and_failure(self):
         api = self.client.drive.v1.permission_member.create

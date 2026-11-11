@@ -1,6 +1,7 @@
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
+from lark_oapi.api.wiki.v2 import CreateSpaceNodeResponse
 
 from gautils.feishu.core.feishu import Feishu
 from gautils.feishu.core.wiki import Wiki, WikiSpace
@@ -11,8 +12,9 @@ class TestPinnedLarkSdkCompatibility(unittest.TestCase):
     def test_wiki_builders_match_pinned_sdk(self):
         client = MagicMock()
         space = WikiSpace(client, '123')
-        client.wiki.v2.space_node.create.return_value = response(
-            data=obj(node_token='node'))
+        client.wiki.v2.space_node.create.return_value = CreateSpaceNodeResponse({
+            'code': 0, 'data': {'node': {'node_token': 'node'}},
+        })
         self.assertEqual(space.create_node('Doc', 'docx').id, 'node')
 
         client.wiki.v2.space_node.move.return_value = response()

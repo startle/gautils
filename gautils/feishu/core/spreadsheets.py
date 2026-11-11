@@ -219,73 +219,28 @@ class Spreadsheet:
         return sheets
 
     def create_sheet(self, title: str, row_count: int = 1000, column_count: int = 20) -> Optional[Sheet]:
-        """创建工作表
+        """创建工作表（当前适配器尚未实现，抛出 NotImplementedError）
 
         Args:
             title: 工作表标题
             row_count: 行数
             column_count: 列数
 
-        Returns:
-            新创建的Sheet对象
+        Raises:
+            NotImplementedError: 当前适配器不支持创建工作表
         """
-        from lark_oapi.api.sheets.v3 import AddSheetRequest, AddSheetRequestBody, AddSheetResponse, SheetProperties, GridProperties
-
-        request: AddSheetRequest = AddSheetRequest.builder() \
-            .spreadsheet_token(self.spreadsheet_token) \
-            .request_body(AddSheetRequestBody.builder()
-                          .sheets([SheetProperties.builder()
-                                   .title(title)
-                                   .index(str(len(self.query_sheets())))
-                                   .grid_properties(GridProperties.builder()
-                                                    .row_count(row_count)
-                                                    .column_count(column_count)
-                                                    .build())
-                                   .build()])
-                          .build()) \
-            .build()
-
-        response: AddSheetResponse = self.client.sheets.v3.spreadsheet_sheet.add(request)
-
-        if not response.success():
-            lark.logger.error(f"sheets.v3.spreadsheet_sheet.add failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}")
-            return None
-
-        self._sheets = None  # 清除缓存
-        return self.get_sheet(sheet_title=title)
+        raise NotImplementedError('Worksheet creation is not implemented by this SDK adapter')
 
     def delete_sheet(self, sheet_id: str = None, sheet_title: str = None) -> bool:
-        """删除工作表
+        """删除工作表（当前适配器尚未实现，抛出 NotImplementedError）
 
         Args:
             sheet_id: 工作表ID
             sheet_title: 工作表标题
         """
-        if sheet_id is None:
-            if sheet_title is None:
-                raise ValueError('sheet_id or sheet_title is required')
-            sheet_info = self._query_sheet(sheet_title=sheet_title)
-            if sheet_info is None:
-                return True
-            sheet_id = sheet_info[_FS.SHEET.ID]
-
-        from lark_oapi.api.sheets.v3 import DeleteSheetRequest, DeleteSheetRequestBody, DeleteSheetResponse
-
-        request: DeleteSheetRequest = DeleteSheetRequest.builder() \
-            .spreadsheet_token(self.spreadsheet_token) \
-            .request_body(DeleteSheetRequestBody.builder()
-                          .sheets([sheet_id])
-                          .build()) \
-            .build()
-
-        response: DeleteSheetResponse = self.client.sheets.v3.spreadsheet_sheet.delete(request)
-
-        if not response.success():
-            lark.logger.error(f"sheets.v3.spreadsheet_sheet.delete failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}")
-            return False
-
-        self._sheets = None  # 清除缓存
-        return True
+        if sheet_id is None and sheet_title is None:
+            raise ValueError('sheet_id or sheet_title is required')
+        raise NotImplementedError('Worksheet deletion is not implemented by this SDK adapter')
 
     def get_metadata(self) -> dict:
         """获取电子表格元数据"""
@@ -302,10 +257,14 @@ class Spreadsheet:
             lark.logger.error(f"sheets.v3.spreadsheet.get failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}")
             return {}
 
+        spreadsheet = response.data.spreadsheet if response.data else None
+        if spreadsheet is None:
+            lark.logger.error('sheets.v3.spreadsheet.get returned no spreadsheet')
+            return {}
         metadata = {
-            'title': response.data.title if response.data else None,
+            'title': spreadsheet.title,
             'token': self.spreadsheet_token,
-            'url': response.data.url if response.data else None,
+            'url': spreadsheet.url,
         }
         self._metadata = metadata
         return metadata

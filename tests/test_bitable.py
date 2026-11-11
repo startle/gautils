@@ -501,7 +501,7 @@ class TestTableInsertRecords(unittest.TestCase):
             count = self.table.insert_records(df)
 
         self.assertEqual(count, 1)
-        mock_insert.assert_called_once_with(df)
+        mock_insert.assert_called_once_with(df, errors=[])
 
     def test_insert_records_deduplicates_primary_rows(self):
         df = pd.DataFrame({'name': ['a', 'a', 'b'], 'value': [1, 2, 3]})
@@ -529,12 +529,13 @@ class TestTableInsertRecords(unittest.TestCase):
         self.assertEqual(result, 0)
         mock_dump.assert_called_once()
 
-    def test_batch_create_success_returns_input_count(self):
+    def test_batch_create_success_returns_response_count(self):
         df = pd.DataFrame({
             'name': ['a', 'b'],
             'optional': pd.Series([None, 'x'], dtype=object),
         })
-        self.bitable.client.bitable.v1.app_table_record.batch_create.return_value = _mock_response()
+        self.bitable.client.bitable.v1.app_table_record.batch_create.return_value = _mock_response(
+            data=MagicMock(records=[MagicMock(), MagicMock()]))
 
         result = self.table._insert_records(df)
 

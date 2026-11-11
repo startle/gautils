@@ -17,10 +17,19 @@ from gautils.feishu.core import (
 
 from .errors import ApiError, ResourceNotFoundError, UnsupportedOperationError
 from .models import BatchError, BatchResult
+from gautils.feishu.core._errors import _FeishuApiError
 
 
 def _frame(value: pd.DataFrame | None) -> pd.DataFrame:
     return pd.DataFrame() if value is None else value
+
+
+def _strict_call(function, *args, **kwargs):
+    try:
+        return function(*args, **kwargs)
+    except _FeishuApiError as exc:
+        raise ApiError('feishu', exc.operation, code=exc.code,
+                       message=exc.message, details=exc.details) from exc
 
 
 class Table:
@@ -45,14 +54,16 @@ class Table:
         attempted = 0 if frame is None else len(frame)
         if attempted == 0:
             return BatchResult(attempted=0, succeeded=0)
-        count = self.legacy.insert_records(frame, upsert=not insert_only)
-        succeeded = max(0, min(int(count or 0), attempted))
-        failed = attempted - succeeded
-        errors = () if not failed else (
-            BatchError(index=None, message='Feishu did not accept all records'),)
+        result = _strict_call(self.legacy._insert_records_result, frame,
+                              upsert=not insert_only, strict=True)
+        failed = result.attempted - result.skipped - result.succeeded
+        errors = tuple(BatchError(index=None, message=error.message,
+                                  code=error.code, details=error.details)
+                       for error in result.errors)
         return BatchResult(
-            attempted=attempted, succeeded=succeeded, failed=failed,
-            created=succeeded if insert_only else 0, errors=errors)
+            attempted=result.attempted, succeeded=result.succeeded, failed=failed,
+            created=result.created, updated=result.updated, skipped=result.skipped,
+            errors=errors)
 
     def delete(self, *, filter=None) -> int:
         return self.legacy.del_rows_by_filter(filter=filter)
@@ -160,10 +171,10 @@ class WikiSpace:
         return dict(self.legacy.get_info())
 
     def nodes(self, *, parent_token: str | None = None) -> pd.DataFrame:
-        return _frame(self.legacy.list_nodes(parent_node_token=parent_token))
+        return _frame(_strict_call(self.legacy._list_nodes, parent_node_token=parent_token))
 
     def node(self, token: str) -> WikiNode:
-        legacy = self.legacy.get_node(token)
+        legacy = _strict_call(self.legacy.get_node, token, strict=True)
         if legacy is None:
             raise ResourceNotFoundError('Feishu wiki node', token)
         return WikiNode(legacy)

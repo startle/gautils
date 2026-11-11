@@ -2,12 +2,14 @@ import warnings
 import json
 import pandas as pd
 import numpy as np
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
 import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import *
 from lark_oapi.api.drive.v1 import CreatePermissionMemberRequest, CreatePermissionMemberResponse
 from ...utils import batch_split
+from ._errors import _FeishuApiError
 
 warnings.filterwarnings(
     "ignore",
@@ -75,6 +77,30 @@ def _query_has_more_list_by_page_token(query_f: Callable[[str], pd.DataFrame]) -
         if df is not None and (len(df) > 0):
             dfs.append(df)
     return pd.concat(dfs) if len(dfs) > 0 else None
+
+
+@dataclass
+class _WriteResult:
+    attempted: int = 0
+    skipped: int = 0
+    created: int = 0
+    updated: int = 0
+    errors: list = field(default_factory=list)
+
+    @property
+    def succeeded(self):
+        return self.created + self.updated
+
+
+def _date_milliseconds(value):
+    if pd.isna(value):
+        return None
+    value = pd.Timestamp(value)
+    if pd.isna(value):
+        return None
+    if value.tzinfo is None:
+        value = value.tz_localize('Asia/Shanghai')
+    return int(value.as_unit('ms').asm8.view('i8'))
 
 
 class Table:
@@ -259,12 +285,9 @@ class Table:
             elif _type in [FTF.V_NUMBER]:
                 df[col] = df[col].astype('Float64').fillna(0).round(5)
             elif _type in [FTF.V_DATETIME]:
-                df[col] = pd.to_datetime(df[col]).astype('datetime64[ns]')
-                epoch = pd.Timestamp(0, tz='Asia/Shanghai').tz_localize(None)
-                df[col] = df[col].fillna(epoch)
-                df[col] = df[col].dt.tz_convert('Asia/Shanghai') if df[col].dt.tz is not None else df[col].dt.tz_localize('Asia/Shanghai')
-                df[col] = (df[col].astype('int64') // 10**6).astype('Int64')
-                df[col] = df[col].replace(0, None)
+                df[col] = pd.Series(
+                    [_date_milliseconds(value) for value in df[col]],
+                    index=df.index, dtype=object)
             elif _type in [FTF.V_FUXUAN]:
                 # 飞书复选框严格要求 Python bool,否则 1254065 CheckboxFieldConvFail
                 def to_bool(v):
@@ -298,31 +321,38 @@ class Table:
     def insert_records(self, df: pd.DataFrame, upsert: bool = True):
         ''' upsert=False 时跳过"查已存在记录"的逐批搜索,直接纯插入。
         清空表后(如 del_all)整表为空,upsert 搜索必然匹配不到,既浪费调用又会撞限流抛错,故用纯插入。'''
-        if df is None or len(df) == 0:
-            return 0
+        return self._insert_records_result(df, upsert=upsert).succeeded
+
+    def _insert_records_result(self, df: pd.DataFrame, upsert: bool = True, *, strict=False):
+        result = _WriteResult(attempted=0 if df is None else len(df))
+        if result.attempted == 0:
+            return result
 
         df = self.clean_df(df)
         df = self.format_type_df_before_CU(df)
-        has_primary = self.primary_fields is not None and len(self.primary_fields) > 0
+        primary_fields = self.primary_fields
+        has_primary = primary_fields is not None and len(primary_fields) > 0
         if has_primary:
-            df = df.drop_duplicates(subset=self.primary_fields, keep='first')
+            df = df.drop_duplicates(subset=primary_fields, keep='first')
+            result.skipped = result.attempted - len(df)
         if not upsert or not has_primary:
-            return self._insert_records(df)
+            result.created = self._insert_records(df, errors=result.errors)
         else:
             df_existed = self._search_existing_primary_records(df)
-            count = 0
             if df_existed is not None and len(df_existed) > 0:
                 field_record_id = _FS.BITABLE.TABLE.RECORD.ID
                 df_existed.reset_index(names=field_record_id, inplace=True)
-                df = df.merge(df_existed, on=self.primary_fields, how='left')
+                df = df.merge(df_existed, on=primary_fields, how='left')
+                if strict and len(df) > result.attempted - result.skipped:
+                    raise _FeishuApiError('bitable.upsert', message='multiple records match a primary key')
                 df_update = df[df[field_record_id].notnull()]
                 df_update = df_update.set_index(field_record_id).sort_index()
-                count += self._update_rows(df_update)
+                result.updated = self._update_rows(df_update, errors=result.errors)
                 df_insert = df[df[field_record_id].isnull()].drop(columns=[field_record_id])
             else:
                 df_insert = df
-            count += self._insert_records(df_insert)
-            return count
+            result.created = self._insert_records(df_insert, errors=result.errors)
+        return result
 
     def _build_primary_filter(self, df: pd.DataFrame) -> FilterInfo:
         # 搜索接口 filter.conditions 只接受扁平 Condition,不支持嵌套条件组;
@@ -347,7 +377,7 @@ class Table:
             return None
         return pd.concat(dfs).loc[lambda value: ~value.index.duplicated(keep='first')]
 
-    def _insert_records(self, df: pd.DataFrame):
+    def _insert_records(self, df: pd.DataFrame, *, errors=None):
         if df is None or len(df) == 0:
             return 0
 
@@ -362,14 +392,12 @@ class Table:
                               ).build()
             response: BatchCreateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_create(request)
             if not response.success():
-                lark.logger.error(f"client.bitable.v1.app_table_record.batch_create failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
                 if response.code == 1254130:
                     self._dump_oversized_cells(df, op='batch_create')
-                return 0
-            return len(df)
+            return self._batch_write_count('bitable.batch_create', response, df, errors)
         return sum(inner(x) for x in batch_split(df, 1000))
 
-    def _update_rows(self, df: pd.DataFrame):
+    def _update_rows(self, df: pd.DataFrame, *, errors=None):
         if df is None or len(df) == 0:
             return 0
 
@@ -386,12 +414,30 @@ class Table:
                                                          ).build()
             response: BatchUpdateAppTableRecordResponse = self._bitable.client.bitable.v1.app_table_record.batch_update(request)
             if not response.success():
-                lark.logger.error(f"client.bitable.v1.app_table_record.batch_update failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}, resp: \n{json.dumps(json.loads(response.raw.content), indent=4, ensure_ascii=False)}")
                 if response.code == 1254130:
                     self._dump_oversized_cells(df, op='batch_update')
-                return 0
-            return len(response.data.records)
+            return self._batch_write_count('bitable.batch_update', response, df, errors)
         return sum(inner(x) for x in batch_split(df, 1000))
+
+    @staticmethod
+    def _batch_write_count(operation, response, df, errors):
+        count = 0
+        error = None
+        if not response.success():
+            error = _FeishuApiError(operation, response)
+        else:
+            records = response.data.records if response.data else None
+            count = len(records) if records is not None else 0
+            if count != len(df):
+                error = _FeishuApiError(operation, response, message='incomplete batch response')
+                if count > len(df):
+                    count = 0
+        if error is not None:
+            error.details['indexes'] = df.index.tolist()
+            lark.logger.error(str(error))
+            if errors is not None:
+                errors.append(error)
+        return count
 
     def del_rows(self):
         return self.del_rows_by_filter()

@@ -4,6 +4,7 @@ import pandas as pd
 from typing import Optional, List
 import lark_oapi as lark
 from lark_oapi.api.wiki.v2 import *
+from ._errors import _FeishuApiError
 
 warnings.filterwarnings(
     "ignore",
@@ -112,9 +113,16 @@ class WikiSpace:
             lark.logger.error(f"wiki.v2.space.get_node failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}")
             return {}
 
+        node = response.data.node if response.data else None
+        if node is None or not node.space_id:
+            lark.logger.error('wiki.v2.space.get_node returned no space_id')
+            return {}
+        space_info = WikiSpace(self.client, node.space_id).get_info()
+        if not space_info or space_info.get('name') is None:
+            return {}
         info = {
-            'space_id': response.data.space.space_id if response.data and response.data.space else None,
-            'name': response.data.space.name if response.data and response.data.space else None,
+            'space_id': node.space_id,
+            'name': space_info['name'],
             'node_token': node_token,
         }
         return info
@@ -128,6 +136,13 @@ class WikiSpace:
         Returns:
             DataFrame包含节点信息
         """
+        try:
+            return self._list_nodes(parent_node_token)
+        except _FeishuApiError as exc:
+            lark.logger.error(str(exc))
+            return pd.DataFrame()
+
+    def _list_nodes(self, parent_node_token: str = None) -> pd.DataFrame:
         if self._nodes is not None and parent_node_token is None:
             return self._nodes
 
@@ -142,10 +157,11 @@ class WikiSpace:
             response: ListSpaceNodeResponse = self.client.wiki.v2.space_node.list(request)
 
             if not response.success():
-                lark.logger.error(f"wiki.v2.space_node.list failed, code: {response.code}, msg: {response.msg}, log_id: {response.get_log_id()}")
-                return False, None, pd.DataFrame()
+                raise _FeishuApiError('wiki.list_nodes', response)
+            if response.data is None:
+                raise _FeishuApiError('wiki.list_nodes', response, message='missing pagination data')
 
-            items = response.data.items if response.data else []
+            items = response.data.items or []
             nodes = []
             for item in items:
                 nodes.append({
@@ -164,10 +180,15 @@ class WikiSpace:
         all_nodes = []
         has_more = True
         page_token = None
+        seen_tokens = set()
         while has_more:
             has_more, page_token, df_page = inner(page_token)
             if not df_page.empty:
                 all_nodes.append(df_page)
+            if has_more:
+                if not page_token or page_token in seen_tokens:
+                    raise _FeishuApiError('wiki.list_nodes', message='invalid pagination token')
+                seen_tokens.add(page_token)
 
         df = pd.concat(all_nodes, ignore_index=True) if all_nodes else pd.DataFrame()
 
@@ -176,9 +197,9 @@ class WikiSpace:
 
         return df
 
-    def get_node(self, node_token: str) -> Optional[WikiNode]:
+    def get_node(self, node_token: str, *, strict: bool = False) -> Optional[WikiNode]:
         """获取指定节点"""
-        nodes = self.list_nodes()
+        nodes = self._list_nodes() if strict else self.list_nodes()
         if nodes.empty:
             return None
 
@@ -215,9 +236,12 @@ class WikiSpace:
             return None
 
         self._nodes = None  # 清除缓存
-
+        node = response.data.node if response.data else None
+        if node is None or not node.node_token:
+            lark.logger.error('wiki.v2.space_node.create returned no node_token')
+            return None
         node_info = {
-            _FS.WIKI.NODE.ID: response.data.node_token if response.data else None,
+            _FS.WIKI.NODE.ID: node.node_token,
             _FS.WIKI.NODE.NAME: title,
             _FS.WIKI.NODE.TYPE: node_type,
             _FS.WIKI.NODE.PARENT_ID: parent_node_token,

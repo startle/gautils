@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from gautils.v2.errors import ApiError, ResourceNotFoundError, UnsupportedOperationError
+from gautils.feishu.core.bitable import _WriteResult
+from gautils.feishu.core._errors import _FeishuApiError
 from gautils.v2.feishu import (
     Bitable, Feishu, Sheet, Spreadsheet, Table, Wiki, WikiNode, WikiSpace,
 )
@@ -30,13 +32,14 @@ class TestV2Table(unittest.TestCase):
     def test_upsert_empty_success_and_partial(self):
         self.assertTrue(self.table.upsert(pd.DataFrame()).ok)
         frame = pd.DataFrame({'x': [1, 2]})
-        self.legacy.insert_records.return_value = 2
+        self.legacy._insert_records_result.return_value = _WriteResult(attempted=2, created=2)
         result = self.table.upsert(frame, insert_only=True)
         self.assertTrue(result.ok)
         self.assertEqual(result.created, 2)
-        self.legacy.insert_records.assert_called_with(frame, upsert=False)
+        self.legacy._insert_records_result.assert_called_with(frame, upsert=False, strict=True)
 
-        self.legacy.insert_records.return_value = 1
+        self.legacy._insert_records_result.return_value = _WriteResult(
+            attempted=2, updated=1, errors=[_FeishuApiError('update', message='bad')])
         result = self.table.upsert(frame)
         self.assertFalse(result.ok)
         self.assertEqual(result.failed, 1)
@@ -118,7 +121,7 @@ class TestV2Wiki(unittest.TestCase):
 
         legacy_space = MagicMock(space_id='sp1')
         legacy_space.get_info.return_value = {'name': 'Space'}
-        legacy_space.list_nodes.return_value = None
+        legacy_space._list_nodes.return_value = None
         legacy_space.get_node.return_value = legacy_node
         space = WikiSpace(legacy_space)
         self.assertEqual(space.id, 'sp1')

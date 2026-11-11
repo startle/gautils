@@ -71,6 +71,33 @@ result = table.upsert(frame)
 当前锁定的 `lark-oapi==1.4.24` 没有电子表格单元格读写 API。v2 对这些操作明确
 抛出 `UnsupportedOperationError`，不会伪装成空数据或成功结果。
 
+旧版 `Spreadsheet.create_sheet()` / `delete_sheet()` 的 SDK 适配尚未实现，现明确
+抛出 `NotImplementedError`；这两项能力尚不可用。
+
+### 批量结果与失败处理
+
+飞书 v2 `Table.upsert()` 返回实际写入的 `created`、`updated` 和去重跳过的
+`skipped`。主键重复时沿用保留首行的规则，满足：
+
+```text
+attempted = succeeded + failed + skipped
+succeeded = created + updated
+```
+
+`success_rate` 按去重后实际尝试写入的行计算；空批次或全部跳过时为 `1.0`。
+跳过行不会使 `ok` 变为 `False`，也不会触发 `raise_for_errors()`。
+API 拒绝的批次保留错误码、消息和批次索引；已成功的其他批次计数仍保留。
+调用方重试前应检查这些结果，避免重新提交已成功的记录。
+若远端同一主键匹配多条记录，v2 在写入前抛出 `ApiError`，防止统计含糊；
+旧版 `insert_records()` 继续返回成功条数。
+
+v2 `WikiSpace.nodes()` / `node()` 的分页读取失败时抛出带错误码的 `ApiError`。
+只有全部页面读取成功才缓存结果；旧版 `list_nodes()` 失败时记录日志并返回空表，
+下次调用可以重新读取。
+
+日期字段保留带时区输入的时间点，无时区输入按 `Asia/Shanghai` 解释。
+输出使用毫秒时间戳，空值保持为空，零时间戳是合法值。
+
 ### 旧版数据库查询缓存
 
 文件缓存键包含连接身份、SQL 以及保留类型和边界的参数，命名参数顺序不影响命中。
@@ -97,3 +124,6 @@ python -m pytest -q
 ```
 
 项目门禁要求 `gautils` 生产代码语句覆盖率不低于 98%。
+
+飞书集成回归测试使用真实 SDK 响应模型，仅替换外部请求。
+最低锁定 SDK `1.4.24` 和较新 SDK `1.7.3` 分别验证；这不代表任意未来版本均兼容。

@@ -56,14 +56,14 @@ class TestWikiSpace(unittest.TestCase):
 
     def test_get_info_by_node_token(self):
         api = self.client.wiki.v2.space.get_node
-        api.return_value = response(data=obj(space=obj(space_id='123', name='Space')))
+        api.return_value = response(data=obj(node=obj(space_id='123')))
+        self.client.wiki.v2.space.get.return_value = response(
+            data=obj(space=obj(name='Space', description='Desc')))
         self.assertEqual(self.space.get_info_by_node_token('node'), {
             'space_id': '123', 'name': 'Space', 'node_token': 'node',
         })
         api.return_value = response(data=None)
-        self.assertEqual(self.space.get_info_by_node_token('empty'), {
-            'space_id': None, 'name': None, 'node_token': 'empty',
-        })
+        self.assertEqual(self.space.get_info_by_node_token('empty'), {})
         api.return_value = response(success=False)
         self.assertEqual(self.space.get_info_by_node_token('bad'), {})
 
@@ -107,7 +107,7 @@ class TestWikiSpace(unittest.TestCase):
     def test_create_node_success_empty_data_and_failure(self):
         with fake_wiki_builders('CreateSpaceNodeRequest', 'CreateSpaceNodeRequestBody'):
             api = self.client.wiki.v2.space_node.create
-            api.return_value = response(data=obj(node_token='new-node'))
+            api.return_value = response(data=obj(node=obj(node_token='new-node')))
             self.space._nodes = pd.DataFrame({'x': [1]})
             node = self.space.create_node('Title', 'docx', 'parent')
             self.assertEqual(node.id, 'new-node')
@@ -115,7 +115,7 @@ class TestWikiSpace(unittest.TestCase):
             self.assertIsNone(self.space._nodes)
 
             api.return_value = response(data=None)
-            self.assertIsNone(self.space.create_node('Empty', 'docx').id)
+            self.assertIsNone(self.space.create_node('Empty', 'docx'))
             api.return_value = response(success=False)
             self.assertIsNone(self.space.create_node('Bad', 'docx'))
 
